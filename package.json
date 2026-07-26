@@ -1,0 +1,19 @@
+{
+  "name": "groundwork",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "AI-facilitated strategic planning for faith-based organizations. Phase 0 scaffold.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "migrate:local": "wrangler d1 migrations apply groundwork --local",
+    "lint:vocab": "node scripts/lint-vocabulary.mjs",
+    "lint:vocab:selftest": "node scripts/lint-vocabulary.mjs --self-test"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.0.0",
+    "typescript": "^7.0.0",
+    "wrangler": "^4.0.0"
+  }
+}

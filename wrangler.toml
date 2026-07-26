@@ -1,0 +1,27 @@
+# Groundwork — Cloudflare Workers configuration.
+# Phase 0: local dev only. No live resources are attached to this config
+# yet — database_id and bucket_name below are placeholders for local
+# emulation (`wrangler dev`, `wrangler d1 migrations apply --local`).
+# Do not run against --remote without Jeremy present (docs/decisions.md, 2026-07-26).
+
+name = "groundwork"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+[[durable_objects.bindings]]
+name = "SESSION_DO"
+class_name = "SessionDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SessionDO"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "groundwork"
+database_id = "local-dev-placeholder"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "AUDIO_BUCKET"
+bucket_name = "groundwork-audio-local"

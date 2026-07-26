@@ -1,0 +1,21 @@
+{
+  "updated_at": "2026-07-26T16:43:46Z",
+  "overall_status": "green",
+  "current_phase": 0,
+  "metrics": {
+    "vocabulary_lint": {
+      "value": "clean",
+      "unit": "status",
+      "status": "green",
+      "checked_at": "2026-07-26T16:43:46Z"
+    },
+    "monthly_spend_usd": {
+      "value": 0,
+      "unit": "$",
+      "status": "green",
+      "checked_at": "2026-07-26T16:43:46Z"
+    }
+  },
+  "active_alerts": [],
+  "pending_escalations": []
+}

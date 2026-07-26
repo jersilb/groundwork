@@ -1,0 +1,10 @@
+# Files exempt from the vocabulary lint (scripts/lint-vocabulary.mjs).
+# These files must legitimately NAME banned terms as prohibitions —
+# nothing else belongs on this list. Widening this list to silence a
+# genuine violation is exactly the failure ops/runbooks/ip-trademark-flag-detected.md
+# exists to catch. See docs/vocabulary.md and .claude/agents/ip-firewall-guardian.md.
+
+docs/vocabulary.md
+docs/agent-team.md
+.claude/agents/ip-firewall-guardian.md
+.claude/agents/curriculum-author.md

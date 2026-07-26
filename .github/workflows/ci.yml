@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  vocabulary-lint:
+    name: Vocabulary lint (IP firewall)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Self-test — prove the lint catches a planted banned term
+        run: node scripts/lint-vocabulary.mjs --self-test
+      - name: Lint the real repo — must be clean
+        run: node scripts/lint-vocabulary.mjs
+
+  build:
+    name: Typecheck + local D1 migration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Validate wrangler config
+        run: npx wrangler deploy --dry-run --outdir dist
+      - name: Apply D1 migration locally
+        run: npx wrangler d1 migrations apply groundwork --local

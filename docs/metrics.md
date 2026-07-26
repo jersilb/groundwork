@@ -1,0 +1,92 @@
+# Metrics & KPIs — Groundwork
+**Last Updated**: 2026-07-26
+
+The AI checks these on the schedule in `ops/schedules.md` and updates `DASHBOARD.md` after each check. Anything hitting Warning or Critical triggers the relevant runbook in `ops/runbooks/`.
+
+---
+
+## Product KPIs (from the build plan §9 — the real targets, post-launch)
+
+| KPI | Threshold |
+|---|---|
+| Session completion rate (started → finished same day) | > 95% |
+| Session end within ±20 min of schedule | > 85% |
+| EVALUATOR `thin` verdict precision | > 0.8 |
+| Re-prompts rated unhelpful | < 10% |
+| Lab 1 → Lab 4 completion | > 60% |
+| Year 1 → sustain tier conversion | > 70% |
+| LLM + transcription cost per session-day | < 8% of amortized revenue |
+
+None of these are measurable until real sessions run (Phase 1+). Track them from the first simulated run onward, not just live customers.
+
+## Success Criteria (v1, from build plan §1)
+
+| # | Criterion | Measurement |
+|---|---|---|
+| 1 | Full-day lab, 6–12 leaders, zero facilitator intervention, no dead air > 45s caused by the app | Session transcript + app event log review |
+| 2 | EVALUATOR flags vague/off-track answers helpfully, not pedantically | Post-segment thumbs rating; < 1 in 10 re-prompts rated unhelpful |
+| 3 | Session ends within ±20 minutes of schedule | `lab_session.actual_duration_min` vs. `scheduled_for` |
+| 4 | One-page plan needs < 5 leader edits before approval | Edit count on the generated `plan_artifact` |
+| 5 | 60% of churches completing Lab 1 complete all four labs | `program.status` progression across `lab_number` |
+
+## Build-Phase Health Metrics
+
+| Metric | Definition | How Measured | Good 🟢 | Warning 🟡 | Critical 🔴 |
+|--------|------------|---------------|---------|------------|-------------|
+| Phase gate status | Current phase's anchor result | `docs/roadmap.md` gate check | Pass | Attempted, not yet passing | Blocked > 1 week |
+| Vocabulary lint | CI pass/fail | `scripts/lint-vocabulary.mjs` | Clean | — | Any banned term found |
+| Build spend (MTD) | Cloudflare + Anthropic + Stripe test | Manual tally until billing APIs are wired | < $150 | $150–200 | > $200 |
+| EVALUATOR `thin` precision (Phase 2+) | Precision on labeled fixture set | `evaluator-engineer`'s eval harness | > 0.85 | 0.80–0.85 | < 0.80 (hard gate) |
+
+---
+
+## Where Metrics Live
+
+- **Status snapshot file**: `ops/status.json` — written after every health check.
+- **Collection script**: `scripts/collect_metrics.py`.
+- **Dashboard**: `DASHBOARD.md` — human-readable, updated from `ops/status.json`.
+
+---
+
+## `ops/status.json` Schema
+
+```json
+{
+  "updated_at": "ISO8601 timestamp",
+  "overall_status": "green | yellow | red",
+  "current_phase": 0,
+  "metrics": {
+    "metric_name": {
+      "value": 0,
+      "unit": "ms | % | count | $",
+      "status": "green | yellow | red",
+      "checked_at": "ISO8601 timestamp"
+    }
+  },
+  "active_alerts": [],
+  "pending_escalations": []
+}
+```
+
+---
+
+## Reporting Cadence
+
+Event-driven only (Jeremy's choice, 2026-07-26) — not calendar-driven.
+
+| Trigger | What Gets Checked | Output |
+|---|---|---|
+| Phase-gate attempt | The phase's anchor | `DASHBOARD.md` update + `docs/decisions.md` entry |
+| Tier 2/3 item arises | Relevant context | `templates/escalation-brief.md` → `OUTPUTS/escalations/` |
+| Retrospective (as needed, not monthly by default) | KPI trend, capability gaps | `templates/retrospective.md` → `OUTPUTS/retrospectives/` |
+
+---
+
+## Alert → Escalation Path
+
+If any metric hits Critical and no runbook resolves it:
+1. Write an escalation brief using `templates/escalation-brief.md`.
+2. Log to `OUTPUTS/escalations/`.
+3. Log the unresolved incident in `docs/capability-gaps.md`.
+4. Set `overall_status` to `red` in `ops/status.json`.
+5. Do not retry the failing operation autonomously until Jeremy responds.
