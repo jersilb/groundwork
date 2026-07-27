@@ -121,20 +121,34 @@ async function main() {
     console.log(`${r.id.padEnd(10)}${r.expected.padEnd(12)}${r.predicted.padEnd(12)}${r.match ? "yes" : "NO"}`);
   }
 
+  // Expected-vs-actual, per docs/agent-team.md's topology rules: a merge
+  // that silently drops inputs is a failure mode in its own right, not
+  // something to average away. An error means the case never produced a
+  // usable verdict — it must never be quietly excluded from the gate math.
+  const expectedCases = fixtures.cases.length;
+  const actualResults = rows.length + errors.length;
   if (errors.length > 0) {
-    console.error(`\n${errors.length} case(s) errored (parse/validation failures, not verdict mismatches):`);
+    console.error(`\n${errors.length}/${expectedCases} case(s) ERRORED (parse/validation failures, not verdict mismatches) — excluded from the confusion matrix below:`);
     for (const e of errors) console.error(`  ${e}`);
+  }
+  if (actualResults !== expectedCases) {
+    console.error(`\nFAIL: expected ${expectedCases} case outcomes, accounted for ${actualResults}. Something was silently dropped.`);
+    process.exit(1);
   }
 
   const precision = tp + fp > 0 ? tp / (tp + fp) : NaN;
   const recall = tp + fn > 0 ? tp / (tp + fn) : NaN;
 
-  console.log(`\n'thin' verdict confusion matrix: TP=${tp} FP=${fp} FN=${fn} TN=${tn}`);
+  console.log(`\n'thin' verdict confusion matrix (over ${rows.length}/${expectedCases} cases that produced a verdict): TP=${tp} FP=${fp} FN=${fn} TN=${tn}`);
   console.log(`Precision: ${precision.toFixed(3)}  Recall: ${recall.toFixed(3)}`);
 
   if (realMode) {
+    if (errors.length > 0) {
+      console.log(`\nPhase 2 gate: INCONCLUSIVE — ${errors.length} case(s) errored. A precision number computed over a subset that excludes the cases EVALUATOR couldn't even produce valid output for is not a trustworthy gate measurement. Fix the errors and re-run before trusting this number.`);
+      process.exit(1);
+    }
     const gatePassed = precision > 0.8;
-    console.log(`\nPhase 2 gate (precision > 0.8): ${gatePassed ? "PASS" : "FAIL"}`);
+    console.log(`\nPhase 2 gate (precision > 0.8, ${expectedCases}/${expectedCases} cases clean): ${gatePassed ? "PASS" : "FAIL"}`);
     process.exit(gatePassed ? 0 : 1);
   } else {
     console.log("\nNo gate is being enforced in self-test mode — this number describes the heuristic stand-in, not EVALUATOR.");

@@ -1,12 +1,12 @@
 # DASHBOARD — Groundwork
-**Last Updated**: 2026-07-27T03:51:20Z
+**Last Updated**: 2026-07-27T04:39:25Z
 **Updated by**: Claude (manual, multi-phase build session)
 
 ---
 
-## Overall Status: 🟢 HEALTHY
+## Overall Status: 🟡 DEGRADED
 
-Phases 0, 1, and 3 gates passed (1 and 3 via real automated proxies — see `docs/capability-gaps.md` for the honest scope reductions). Phase 2 (Guide Engine) is built and unit-tested but its precision gate is blocked on an Anthropic API key this environment doesn't have. No live customer, no revenue, no production infrastructure — nothing to break yet.
+Phases 0, 1, 3 gates passed. Phase 2's gate was **measured for real and genuinely failed** (EVALUATOR precision 0.667 vs. the 0.8 threshold) — see Pending Decisions below. Phase 4 is built; its gate needs live Cloudflare access this sandbox's network policy blocks outright, independent of credentials. No live customer, no revenue, no production infrastructure — nothing to break yet.
 
 ---
 
@@ -14,10 +14,11 @@ Phases 0, 1, and 3 gates passed (1 and 3 via real automated proxies — see `doc
 
 | Metric | Value | Status | Last Checked |
 |--------|-------|--------|--------------|
-| Gates passed | Phase(s) 0, 1, 3 | 🟢 | 2026-07-27T03:51:20Z |
-| Built, awaiting gate | Phase(s) 2 | 🟡 | 2026-07-27T03:51:20Z |
-| vocabulary_lint | clean | 🟢 | 2026-07-27T03:51:20Z |
-| monthly_spend_usd | 0 | 🟢 | 2026-07-27T03:51:20Z |
+| Gates passed | Phase(s) 0, 1, 3 | 🟢 | 2026-07-27T04:39:25Z |
+| Gates measured and FAILED | Phase(s) 2 | 🔴 | 2026-07-27T04:39:25Z |
+| Built, awaiting gate | Phase(s) 4 | 🟡 | 2026-07-27T04:39:25Z |
+| vocabulary_lint | clean | 🟢 | 2026-07-27T04:39:25Z |
+| monthly_spend_usd | 0 | 🟢 | 2026-07-27T04:39:25Z |
 
 Full definitions and thresholds → `docs/metrics.md`.
 
@@ -25,7 +26,9 @@ Full definitions and thresholds → `docs/metrics.md`.
 
 ## Pending Decisions (Needs Jeremy)
 
-✅ Empty = no pending decisions. Jeremy is clear.
+| Item | Filed | Urgency | Brief |
+|------|-------|---------|-------|
+| Phase 2 gate genuinely failed (precision 0.667 vs 0.8) — approve further EVALUATOR prompt tuning, or accept as expected pending Phase 8's real curriculum-scale fixture set? | 2026-07-27 | Low — doesn't block continued build | `docs/decisions.md`, 2026-07-27 entry "Real Phase 2 gate measurement" |
 
 ---
 
@@ -40,15 +43,19 @@ Full definitions and thresholds → `docs/metrics.md`.
 - 2026-07-26: Build plan received. `async-agent-graph-engineering` skill installed (was missing). Subagent build team (15 agents) designed and committed to `docs/agent-team.md` / `.claude/agents/`.
 - 2026-07-26: Phase 0 scaffold built and gate-verified (wrangler dev, D1 migration, vocabulary lint self-test).
 - 2026-07-27: Phase 1 (session spine) built and gate-verified via automated 3-client proxy test. Real `SessionDO` with WebSocket hibernation, dedup, D1 checkpointing.
-- 2026-07-27: Phase 2 (Guide Engine) built and unit-tested — PACER, EVALUATOR, PROBER, segment spec compiler. Precision gate honestly flagged as blocked on credentials, not claimed.
+- 2026-07-27: Phase 2 (Guide Engine) built — PACER, EVALUATOR, PROBER, segment spec compiler.
 - 2026-07-27: Phase 3 (resilience) built and gate-verified via a real Playwright/Chromium test — IndexedDB queue, offline replay, per-field logical-clock vote reconciliation.
+- 2026-07-27: Jeremy supplied Anthropic, Cloudflare, and Stripe credentials. Cloudflare/Stripe found to be network-blocked from this sandbox regardless (policy, not credentials). Anthropic worked once credits were added.
+- 2026-07-27: **Real Phase 2 gate measurement**: EVALUATOR precision 0.667 against real `claude-sonnet-5` — genuinely below the 0.8 threshold. Two real bugs fixed along the way (invalid `weakest_criterion`, JSON truncation); one prompt-clarity tuning attempt made no measurable difference. Flagged as a Tier 2 decision for Jeremy rather than kept under autonomous tuning.
+- 2026-07-27: Phase 4 (audio pipeline) built and its non-AI mechanics gate-verified for real: consent gating, kill switch, R2/D1/Queue dispatch, and confirmed graceful degradation when Whisper is unreachable.
 
 ---
 
 ## Next 7 Days (Planned)
 
-- Continue building Phases 4–7 per Jeremy's instruction. Gates 4, 5, and 7 will end up flagged **unverified — blocked on credentials** (`docs/capability-gaps.md`) pending an Anthropic API key, Stripe test keys, and live Cloudflare/Workers AI access.
-- Before the first real pilot: run the literal Phase 1 (physical multi-device) and Phase 3 (6 clients / 10 minutes) gates for real — both are proxy-verified only so far.
+- Continue building Phases 5–7 per Jeremy's instruction. Phase 7's gate stays flagged unverified — Stripe's API is network-blocked from this sandbox regardless of the key Jeremy supplied (`docs/capability-gaps.md`).
+- Before the first real pilot: run the literal Phase 1 (physical multi-device) and Phase 3 (6 clients / 10 minutes) gates for real, and get Phase 4's real Whisper test run from an environment that can reach Cloudflare.
+- Awaiting Jeremy's call on the Phase 2 gate decision above.
 
 ---
 
@@ -61,7 +68,7 @@ Full definitions and thresholds → `docs/metrics.md`.
 | Last weekly report | N/A — reporting is event-driven, not weekly |
 | Errors (7-day count) | 0 |
 | Monthly spend (MTD / budget) | $0 / $200 |
-| `docs/capability-gaps.md` open items | 7 (live Cloudflare provisioning, auth provider choice, physical device test, Anthropic key, Stripe keys, Workers AI/Whisper access, Phase 3 literal-scale drill) |
+| `docs/capability-gaps.md` open items | 5 (live Cloudflare provisioning, auth provider choice, physical device test, Phase 3 literal-scale drill, Cloudflare/Stripe network-blocked in this sandbox) — 3 resolved, 2 superseded this session |
 
 ---
 

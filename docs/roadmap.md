@@ -20,14 +20,16 @@ Durable Object with WebSocket fanout, hibernation API, join by session key, stat
 **Owner**: executed directly this session.
 **Not yet built** (explicitly out of Phase 1 scope): join-by-human-typeable-code UX (needs Phase 6's program layer), reconnect/replay (Phase 3), real curriculum specs (Phase 2).
 
-## Phase 2 — Guide Engine 🟡 BUILT — gate blocked on credentials (2026-07-27)
+## Phase 2 — Guide Engine 🔴 BUILT — gate MEASURED AND FAILED (2026-07-27)
 
 Segment spec schema + compiler (YAML → generated TS, since Workers have no runtime filesystem), PACER, EVALUATOR, PROBER as separate agents with structured outputs, an eval harness, a pluggable LLM client (real Anthropic + test doubles).
 **Gate**: EVALUATOR precision above 0.8 on the `thin` verdict against the labeled fixture set. **Do not proceed below this.**
-**What's actually verified**: PACER's deterministic logic (6/6 automated checks), EVALUATOR/PROBER's parsing and schema validation against a fixed fake client (7/7 checks), the segment spec compiler end-to-end, and the eval harness's own confusion-matrix math (precision/recall arithmetic proven correct against a 16-case fixture set, using a heuristic stand-in since no Anthropic key is configured here).
-**What's NOT verified — the gate itself**: real EVALUATOR precision against genuine model judgment. Blocked on an `ANTHROPIC_API_KEY` for the product's runtime (`docs/capability-gaps.md`, 2026-07-27). The 16 fixture cases are also far short of the ~200/segment the plan calls for in §5.6 — that's real curriculum-scale fixture authoring, appropriately later-phase work.
+**What's actually verified**: PACER's deterministic logic (6/6 automated checks), EVALUATOR/PROBER's parsing and schema validation (7/7 checks), the segment spec compiler end-to-end — and, once Jeremy supplied a working Anthropic key, **a real measurement against real `claude-sonnet-5`**: precision **0.667**, recall **0.333**, on 16/16 fixture cases with zero parse errors. **This gate genuinely fails as of 2026-07-27.**
+**Root cause, diagnosed not guessed**: EVALUATOR consistently classifies vague-but-topical corporate-speak/platitude answers ("we remain committed to excellence and synergy") as `off_track` rather than `thin`. One system-prompt clarification pass (explicitly stating "topically-relevant-but-vague is thin, not off_track") was tried and re-measured — **identical TP/FP/FN/TN**, no change. Two real bugs were found and fixed along the way (EVALUATOR returning `weakest_criterion: "none"`, and truncated JSON from an undersized token budget) — those are now 0/16 errors, so the 0.667 measurement itself is trustworthy, not an artifact of a broken harness.
+**Why this isn't chased further right now**: further prompt/rubric iteration is a Tier 2 action (`AI_CEO_INSTRUCTIONS.md` §4 — "guide prompt or rubric changes") — proposed here, not unilaterally kept tuned until it passes. The fixture set is also only 16 hand-authored cases against the ~200/segment §5.6 calls for, authored by this AI without domain review — not yet a fully reliable sample either way.
 **Owner**: executed directly this session (schema design work `guide-engine-architect` would own; implementation `evaluator-engineer` would own).
 **Not yet built**: real curriculum content (blocked on `docs/source-principles.md`), conflict-handling UI flow (§5.4 — needs `frontend-ux-engineer` + Phase 6 wiring), leader-override wiring into the session spine.
+**Recommended next step for Jeremy**: either approve further EVALUATOR prompt iteration specifically targeting the thin/off_track boundary, or treat this as expected until Phase 8's curriculum-scale, domain-reviewed fixture set exists — a 16-case AI-authored set was never going to be the final word on this gate.
 
 ## Phase 3 — Resilience ✅ PASSED (automated proxy, 2026-07-27)
 
@@ -38,11 +40,14 @@ IndexedDB local mirror, submission/vote queue with replay, reconnect reconciliat
 **Not yet built**: the degraded-mode UI (leader continues with pre-generated segment prompts after 5 min offline) and the "cache the next three segments' prompts at all times" requirement — both need Phase 2's segment specs feeding a real frontend, which is `frontend-ux-engineer` + Phase 6 scope.
 **Owner**: executed directly this session.
 
-## Phase 4 — Audio
+## Phase 4 — Audio 🟡 BUILT — gate blocked on network access (2026-07-27)
 
-Chunked capture, R2 upload, queue-driven Whisper transcription, transcript window feeding EVALUATOR. Consent gate, recording indicator, kill switch, 90-day lifecycle rule.
+R2 upload endpoint, D1 chunk tracking, Queue-driven transcription dispatch, consent gate, kill switch, rolling transcript window helper for EVALUATOR. `wrangler r2 bucket lifecycle` 90-day rule documented as a one-time setup script (needs a real bucket to run against).
 **Gate**: 4 hours of continuous recording with zero lost chunks, transcript lag under 90 seconds.
-**Owner**: `audio-pipeline-engineer`.
+**What's actually verified**: `scripts/test-phase4-audio.mjs` — real chunk upload to real local R2, real D1 row creation, real Queue dispatch to a real consumer, consent gating (403 without consent), kill switch (403 once engaged), and — the valuable one — confirmed graceful degradation when the Whisper call fails: the chunk is marked `transcription_error`, not lost, and the pipeline keeps running.
+**What's NOT verified — the gate itself**: real transcription, real latency, the literal 4-hour/zero-lost-chunk duration. Workers AI always calls out to Cloudflare's live inference service — no local emulation exists for it, unlike D1/R2/DO/Queues — and this sandbox's network policy blocks `api.cloudflare.com` entirely, independent of credentials (`docs/capability-gaps.md`, 2026-07-27).
+**Owner**: executed directly this session.
+**Not yet built**: client-side chunked `MediaRecorder` capture and the recording indicator UI — `frontend-ux-engineer` territory.
 
 ## Phase 5 — Synthesis and artifacts
 

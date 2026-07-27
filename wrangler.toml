@@ -25,3 +25,20 @@ migrations_dir = "migrations"
 [[r2_buckets]]
 binding = "AUDIO_BUCKET"
 bucket_name = "groundwork-audio-local"
+
+[[queues.producers]]
+binding = "TRANSCRIPTION_QUEUE"
+queue = "groundwork-transcription-local"
+
+[[queues.consumers]]
+queue = "groundwork-transcription-local"
+max_batch_size = 10
+max_batch_timeout = 5
+
+# Workers AI (Whisper transcription). Real inference always calls out to
+# Cloudflare's service, even under `wrangler dev` — there is no local
+# emulation for this binding, unlike D1/R2/DO/Queues. See
+# docs/capability-gaps.md, 2026-07-27 (this session's sandbox cannot reach
+# api.cloudflare.com at all, so this binding is untestable here regardless).
+[ai]
+binding = "AI"

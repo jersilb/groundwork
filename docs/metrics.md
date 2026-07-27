@@ -55,6 +55,7 @@ None of these are measurable until real sessions run (Phase 1+). Track them from
   "updated_at": "ISO8601 timestamp",
   "overall_status": "green | yellow | red",
   "gates_passed": [0],
+  "gates_failed": [],
   "phases_built_awaiting_gate": [],
   "metrics": {
     "metric_name": {
@@ -69,7 +70,10 @@ None of these are measurable until real sessions run (Phase 1+). Track them from
 }
 ```
 
-`gates_passed` vs `phases_built_awaiting_gate` (added 2026-07-27): a phase can have real, working code without its gate being verifiably passed — e.g. Phase 2's EVALUATOR precision gate needs a live Anthropic key this environment doesn't have. Never collapse these into one "current phase" number; that erases the distinction the anchors principle (`docs/agent-team.md` §5) depends on.
+Three distinct states, never collapsed into one "current phase" number — that erases the distinction the anchors principle (`docs/agent-team.md` §5) depends on:
+- `gates_passed` — the anchor was actually run and it passed.
+- `gates_failed` — the anchor was actually run and it genuinely failed (added 2026-07-27, after Phase 2's real EVALUATOR precision measurement came back at 0.667 against a 0.8 threshold). This is not the same as "awaiting" — it's a real, honest result that needs a decision (tune and re-measure, or accept and move on), not a credential.
+- `phases_built_awaiting_gate` — code exists but the anchor genuinely cannot be run yet (e.g. Phase 4's Workers AI gate needs live Cloudflare access this sandbox's network policy blocks outright).
 
 ---
 

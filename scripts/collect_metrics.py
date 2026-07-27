@@ -35,14 +35,16 @@ def check_vocabulary_lint(verbose):
 
 def load_previous_phase_fields():
     # Phase gate status is tracked manually in docs/roadmap.md for now and
-    # carried forward here. A phase can be built without its gate passing
-    # (docs/metrics.md, 2026-07-27) — never collapse these into one number.
-    defaults = {"gates_passed": [], "phases_built_awaiting_gate": []}
+    # carried forward here. Three distinct states — passed, genuinely
+    # measured-and-failed, or not yet measurable — never collapsed into one
+    # number (docs/metrics.md, 2026-07-27).
+    defaults = {"gates_passed": [], "gates_failed": [], "phases_built_awaiting_gate": []}
     if STATUS_PATH.exists():
         try:
             prev = json.loads(STATUS_PATH.read_text())
             return {
                 "gates_passed": prev.get("gates_passed", []),
+                "gates_failed": prev.get("gates_failed", []),
                 "phases_built_awaiting_gate": prev.get("phases_built_awaiting_gate", []),
             }
         except (json.JSONDecodeError, OSError):
@@ -69,16 +71,18 @@ def build_status(verbose=False):
         },
     }
 
+    phase_fields = load_previous_phase_fields()
+
     overall = "green"
     if any(m["status"] == "red" for m in metrics.values()):
         overall = "red"
-    elif any(m["status"] == "yellow" for m in metrics.values()):
-        overall = "yellow"
+    elif any(m["status"] == "yellow" for m in metrics.values()) or phase_fields["gates_failed"]:
+        overall = "yellow"  # a measured, genuine gate failure is a known issue needing a decision, not a crisis — but not "all clear" either
 
     return {
         "updated_at": now_iso(),
         "overall_status": overall,
-        **load_previous_phase_fields(),
+        **phase_fields,
         "metrics": metrics,
         "active_alerts": [],
         "pending_escalations": [],

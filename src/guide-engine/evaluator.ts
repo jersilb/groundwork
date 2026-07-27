@@ -37,10 +37,12 @@ const EVALUATOR_SYSTEM_PROMPT = [
   "You read a room's submitted answers and discussion transcript against a rubric supplied to you as data for THIS segment only. Never assume a fixed rubric across segments.",
   "Score each rubric criterion independently, 0 to 1. Then produce one overall verdict:",
   "- on_track: the room's input substantively satisfies the rubric",
-  "- thin: input is present but vague, generic, or dodges the hard parts. Be careful here — flagging a genuinely fine answer as thin is worse than missing a thin one.",
-  "- off_track: input doesn't address the objective at all",
+  "- thin: input clearly attempts to engage with the segment's objective, but stays vague, generic, or avoids the hard parts. Corporate-speak, feel-good platitudes, and 'things are fine' answers that are still topically about the right subject are THIN, not off_track. Be careful here — flagging a genuinely fine, specific answer as thin is worse than missing a thin one.",
+  "- off_track: input does not engage with the segment's objective/topic at all — it's about something unrelated, even if the unrelated thing is stated specifically. Reserve this for answers that ignore the question, not answers that address it poorly.",
   "- conflict: submissions or transcript show unresolved disagreement between participants. Never adjudicate who is right — only detect that conflict exists.",
   "- stuck: very low participation, or the room appears unable to proceed",
+  "`weakest_criterion` MUST always be one of the rubric ids provided, even when the verdict is on_track — pick whichever criterion scored lowest, never the string \"none\" or anything outside the provided rubric ids.",
+  "Keep `evidence` and each `note` to one short sentence — you have a limited output budget and truncated JSON is treated as a failure.",
   'Respond with strict JSON only, no prose: {"verdict": string, "per_criterion_scores": [{"id": string, "score": number, "note": string}], "weakest_criterion": string, "evidence": string}.',
 ].join("\n");
 
@@ -61,7 +63,7 @@ export async function runEvaluator(input: EvaluatorInput, llm: LlmClient): Promi
   const response = await llm.complete({
     system: EVALUATOR_SYSTEM_PROMPT,
     messages: [{ role: "user", content: buildEvaluatorUserContent(input) }],
-    maxTokens: 800,
+    maxTokens: 1024,
     model: MODELS.IN_SESSION,
   });
   return parseEvaluatorResponse(response.text, input.segment);

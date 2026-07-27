@@ -69,7 +69,7 @@ function startStaticServer() {
 
 async function main() {
   console.log(`Starting wrangler dev on port ${PORT}...`);
-  const wrangler = spawn("npx", ["wrangler", "dev", "--port", String(PORT)], {
+  const wrangler = spawn("npx", ["wrangler", "dev", "--port", String(PORT), "--local"], {
     stdio: ["ignore", "pipe", "pipe"],
     detached: true, // see docs/decisions.md, 2026-07-27 — lesson from Phase 1
   });

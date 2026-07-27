@@ -80,3 +80,17 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run the real-browser network-cutoff/reconnect test
         run: node scripts/test-phase3-resilience.mjs
+
+  phase4-audio-pipeline:
+    name: Phase 4 gate — consent, kill switch, R2/D1/Queue, graceful AI failure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Apply D1 migrations locally
+        run: npx wrangler d1 migrations apply groundwork --local
+      - name: Run the audio pipeline test (Workers AI runs remote-only; not exercised here)
+        run: node scripts/test-phase4-audio.mjs

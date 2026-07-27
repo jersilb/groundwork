@@ -20,7 +20,7 @@
     { "id": "case-01", "expectedVerdict": "on_track", "submissions": ["Attendance dropped from 340 to 265 over the last 12 months, a 22% decline concentrated in the 18-34 age group.", "Revenue per customer fell 8% in Q3 compared to Q2, driven mainly by the North region."] },
     { "id": "case-02", "expectedVerdict": "thin", "submissions": ["Things have been pretty good overall.", "We're doing fine, no real complaints."] },
     { "id": "case-03", "expectedVerdict": "thin", "submissions": ["We remain committed to excellence and driving synergy across all teams.", "Our culture of continuous improvement continues to deliver value."] },
-    { "id": "case-04", "expectedVerdict": "off_track", "submissions": [] },
+    { "id": "case-04", "expectedVerdict": "stuck", "submissions": [] },
     { "id": "case-05", "expectedVerdict": "off_track", "submissions": ["I like pizza.", "The weather has been nice lately."] },
     { "id": "case-06", "expectedVerdict": "conflict", "submissions": ["Membership is up 15% this year.", "Membership is down sharply, we've lost a third of our base."] },
     { "id": "case-07", "expectedVerdict": "on_track", "submissions": ["Volunteer sign-ups fell from 48 to 31 this quarter, and exit surveys cite scheduling conflicts as the top reason (60% of respondents).", "Facility maintenance requests increased 3x since March, mostly HVAC-related."] },

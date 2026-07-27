@@ -67,7 +67,7 @@ async function waitForCondition(fn, timeoutMs, label) {
 
 async function main() {
   console.log(`Starting wrangler dev on port ${PORT}...`);
-  const wrangler = spawn("npx", ["wrangler", "dev", "--port", String(PORT)], {
+  const wrangler = spawn("npx", ["wrangler", "dev", "--port", String(PORT), "--local"], {
     stdio: ["ignore", "pipe", "pipe"],
     detached: true, // own process group, so we can kill wrangler's workerd
                      // child too — SIGTERM to just the wrapper orphans it
