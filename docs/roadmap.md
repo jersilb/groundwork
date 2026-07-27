@@ -4,17 +4,21 @@ Source of truth: the build plan, §7. Each phase ends with something demonstrabl
 
 ---
 
-## Phase 0 — Scaffold (current)
+## Phase 0 — Scaffold ✅ PASSED (2026-07-26)
 
 Full project scaffold, Wrangler config, D1 schema migration, R2 bucket bindings, CI with the vocabulary lint.
 **Gate**: `wrangler dev` runs, migrations apply, vocabulary lint fails correctly on a planted banned term.
 **Owner**: executed directly this session (see `docs/agent-team.md` §10 — first-phase scaffolding has little genuine parallelism).
+**Verified**: all three conditions run live, not inferred. See `docs/decisions.md`, 2026-07-26.
 
-## Phase 1 — Session spine
+## Phase 1 — Session spine ✅ PASSED (automated proxy, 2026-07-27)
 
-Durable Object with WebSocket fanout. Shared screen joins, phones join by code, state broadcasts. Segment advance, hardcoded three-segment fake lab. No AI yet.
-**Gate**: three real devices in one room advance through segments together with no state divergence.
-**Owner**: `session-spine-engineer`.
+Durable Object with WebSocket fanout, hibernation API, join by session key, state broadcast. Segment advance, hardcoded three-segment fake lab. No AI yet. D1 checkpointing every 30s (alarm) and at every segment boundary.
+**Gate (literal)**: three real devices in one room advance through segments together with no state divergence.
+**Gate (verified this session)**: `scripts/test-phase1-multiclient.mjs` — 3 concurrent real WebSocket clients (1 screen, 2 phones) against a live `wrangler dev` instance, real DO storage, real D1 checkpoint. Confirmed: submission dedup by client UUID, phone-initiated `advance_segment` rejected, all 3 clients converge on identical `stateVersion` and `currentSegmentIndex`. Wired into CI (`phase1-session-spine` job).
+**Open item**: the literal physical-multi-device-in-a-room test has not been run — logged in `docs/capability-gaps.md`. The automated test verifies the DO's convergence mechanism for real; it does not substitute for hardware/network diversity across real devices.
+**Owner**: executed directly this session.
+**Not yet built** (explicitly out of Phase 1 scope): join-by-human-typeable-code UX (needs Phase 6's program layer), reconnect/replay (Phase 3), real curriculum specs (Phase 2).
 
 ## Phase 2 — Guide Engine
 

@@ -1,19 +1,19 @@
 {
-  "updated_at": "2026-07-26T16:43:46Z",
+  "updated_at": "2026-07-27T03:28:07Z",
   "overall_status": "green",
-  "current_phase": 0,
+  "current_phase": 1,
   "metrics": {
     "vocabulary_lint": {
       "value": "clean",
       "unit": "status",
       "status": "green",
-      "checked_at": "2026-07-26T16:43:46Z"
+      "checked_at": "2026-07-27T03:28:07Z"
     },
     "monthly_spend_usd": {
       "value": 0,
       "unit": "$",
       "status": "green",
-      "checked_at": "2026-07-26T16:43:46Z"
+      "checked_at": "2026-07-27T03:28:07Z"
     }
   },
   "active_alerts": [],

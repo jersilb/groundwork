@@ -1,12 +1,12 @@
 # DASHBOARD — Groundwork
-**Last Updated**: 2026-07-26T16:43:46Z
-**Updated by**: Claude (manual, Phase 0 scaffold session)
+**Last Updated**: 2026-07-27T03:28:07Z
+**Updated by**: Claude (manual, multi-phase build session)
 
 ---
 
 ## Overall Status: 🟢 HEALTHY
 
-Phase 0 scaffold in progress. No live customer, no revenue, no production infrastructure — nothing to break yet.
+Phase 0 and Phase 1 gates passed. Phase 1's gate was verified via an automated 3-client proxy test, not the literal physical-device room test (open item, see `docs/capability-gaps.md`). No live customer, no revenue, no production infrastructure — nothing to break yet.
 
 ---
 
@@ -14,9 +14,9 @@ Phase 0 scaffold in progress. No live customer, no revenue, no production infras
 
 | Metric | Value | Status | Last Checked |
 |--------|-------|--------|--------------|
-| Current phase | 0 | 🟢 | 2026-07-26T16:43:46Z |
-| vocabulary_lint | clean | 🟢 | 2026-07-26T16:43:46Z |
-| monthly_spend_usd | 0 | 🟢 | 2026-07-26T16:43:46Z |
+| Current phase | 1 | 🟢 | 2026-07-27T03:28:07Z |
+| vocabulary_lint | clean | 🟢 | 2026-07-27T03:28:07Z |
+| monthly_spend_usd | 0 | 🟢 | 2026-07-27T03:28:07Z |
 
 Full definitions and thresholds → `docs/metrics.md`.
 
@@ -37,15 +37,15 @@ Full definitions and thresholds → `docs/metrics.md`.
 ## Last 7 Days
 
 - 2026-07-26: Build plan received. `async-agent-graph-engineering` skill installed (was missing). Subagent build team (15 agents) designed and committed to `docs/agent-team.md` / `.claude/agents/`.
-- 2026-07-26: Phase 0 scaffold approved and in progress: repo-root project layout, $200/mo budget cap, event-driven `OUTPUTS/` reporting.
+- 2026-07-26: Phase 0 scaffold built and gate-verified (wrangler dev, D1 migration, vocabulary lint self-test).
+- 2026-07-27: Phase 1 (session spine) built and gate-verified via automated 3-client proxy test. Real `SessionDO` with WebSocket hibernation, dedup, D1 checkpointing.
 
 ---
 
 ## Next 7 Days (Planned)
 
-- Verify Phase 0 gate: `wrangler dev` runs, D1 migration applies locally, vocabulary lint fails correctly on a planted term.
-- File setup report to `OUTPUTS/`.
-- On Jeremy's go-ahead: dispatch Phase 1 (session spine) to `session-spine-engineer`.
+- Continue building Phases 2–7 scaffolding per Jeremy's instruction. Several gates (2, 4, 5, 7) will end up flagged **unverified — blocked on credentials** (`docs/capability-gaps.md`) pending an Anthropic API key, Stripe test keys, and live Cloudflare/Workers AI access.
+- Physical multi-device test for Phase 1 still needed before the first real pilot.
 
 ---
 
@@ -58,7 +58,7 @@ Full definitions and thresholds → `docs/metrics.md`.
 | Last weekly report | N/A — reporting is event-driven, not weekly |
 | Errors (7-day count) | 0 |
 | Monthly spend (MTD / budget) | $0 / $200 |
-| `docs/capability-gaps.md` open items | 1 (live Cloudflare resource provisioning — needs Jeremy's account) |
+| `docs/capability-gaps.md` open items | 6 (live Cloudflare provisioning, auth provider choice, physical device test, Anthropic key, Stripe keys, Workers AI/Whisper access) |
 
 ---
 

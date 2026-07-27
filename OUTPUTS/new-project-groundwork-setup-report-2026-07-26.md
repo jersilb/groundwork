@@ -66,7 +66,7 @@ Every claim below was run for real in this session, not inferred from reading th
 | Check | Result |
 |---|---|
 | `npm install` | 41 packages installed, 0 vulnerabilities |
-| `node scripts/lint-vocabulary.mjs --self-test` | **PASS** — correctly flagged a planted "StratOp" occurrence; correctly left clean text alone |
+| `node scripts/lint-vocabulary.mjs --self-test` | **PASS** — correctly flagged a planted occurrence of the first term in `docs/vocabulary.md`; correctly left clean text alone |
 | `node scripts/lint-vocabulary.mjs` (real repo) | **Caught a real bug**: `README.md` initially named the actual trademark terms in its own prohibition sentence, which the lint correctly flagged. Fixed by pointing to `docs/vocabulary.md` instead of repeating the list. Re-ran: clean. |
 | `npx wrangler dev` | Started successfully; bindings for `SessionDO` (Durable Object), `DB` (D1), `AUDIO_BUCKET` (R2) all registered; `GET /health` returned `200 {"status":"ok","phase":0}` |
 | `npx wrangler d1 migrations apply groundwork --local` | 30 SQL commands executed successfully; verified via direct query that all 13 tables from build-plan §4 exist |

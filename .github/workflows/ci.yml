@@ -34,3 +34,17 @@ jobs:
         run: npx wrangler deploy --dry-run --outdir dist
       - name: Apply D1 migration locally
         run: npx wrangler d1 migrations apply groundwork --local
+
+  phase1-session-spine:
+    name: Phase 1 gate — 3-client no-divergence test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Apply D1 migrations locally
+        run: npx wrangler d1 migrations apply groundwork --local
+      - name: Run the automated multi-client convergence test
+        run: node scripts/test-phase1-multiclient.mjs

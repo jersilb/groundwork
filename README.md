@@ -1,6 +1,6 @@
 # Groundwork — AI-Facilitated Strategic Planning for Faith-Based Organizations
 
-**Status**: Phase 0 (Scaffold) — no product code yet, platform substrate only.
+**Status**: Phase 1 (Session spine) built and gate-verified. Building Phases 2–7 scaffolding.
 **Repo**: `jersilb1400/groundwork`
 **Stack**: Cloudflare Workers, Durable Objects, D1, R2, Workers AI (Whisper), React + Vite PWA, Anthropic API, Stripe.
 **Goal**: Walk a faith-based organization's leadership team through four full-day working sessions, purely AI-led, and leave them with a plan they actually run — not a binder that dies on a shelf.
@@ -11,14 +11,14 @@
 
 ## Current Status (Living — Updated After Every Session)
 
-**As of 2026-07-26**:
-- Confirmed working: Wrangler config, local D1 schema migration, stub Durable Object, vocabulary lint (with self-test), CI pipeline.
-- In progress: nothing — Phase 0 gate is the current milestone.
-- Known blockers: none. Live Cloudflare resource provisioning (real D1/R2 instances) is deliberately not done yet — it needs Jeremy's account credentials present.
+**As of 2026-07-27**:
+- Confirmed working: Wrangler config, D1 schema (2 migrations), real `SessionDO` (WebSocket hibernation, dedup, D1 checkpointing), vocabulary lint (with self-test), CI pipeline including an automated Phase 1 gate test.
+- In progress: Phases 2–7 scaffolding, building continuously per Jeremy's instruction.
+- Known blockers: no Anthropic API key, Stripe test keys, or live Cloudflare/Workers AI access in this environment. Phases 2, 4, 5, and 7's gates are being built but cannot be marked passed until Jeremy supplies these — see `docs/capability-gaps.md`.
 
 **Next Priorities**:
-1. Phase 1 — session spine: Durable Object with real WebSocket fanout, join-by-code, three-device no-divergence test. Owner: `session-spine-engineer`.
-2. Guide Engine architecture (§5): segment spec schema, five-agent contracts. Owner: `guide-engine-architect`.
+1. Guide Engine (§5): segment spec schema, PACER/EVALUATOR/PROBER code, eval harness — buildable now, live precision measurement blocked on an Anthropic key.
+2. Resilience (Phase 3): fully buildable and testable locally, no credentials needed.
 3. Line up two or three willing pilot churches before Phase 8 becomes urgent — the plan calls this out explicitly as a now-task, not a later one.
 
 ---
@@ -44,7 +44,7 @@ flowchart TD
 
 Key components:
 - `src/index.ts` — Worker entry point, health route.
-- `src/session-do.ts` — `SessionDO`, one per session (`session:{orgId}:{labId}:{sessionId}`). **Stub only in Phase 0** — real implementation is Phase 1.
+- `src/session-do.ts` — `SessionDO`, one per session. WebSocket hibernation, dedup, D1 checkpointing built in Phase 1. Not yet wired to real org/program data (Phase 6) or reconnect/replay (Phase 3).
 - `migrations/0001_init.sql` — the full data model from §4 of the build plan.
 - `content/packs/church/` — curriculum as data (does not exist yet; Phase 8).
 

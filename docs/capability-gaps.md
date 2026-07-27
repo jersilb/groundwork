@@ -21,3 +21,43 @@ AI-maintained. Log every task an AI session couldn't complete autonomously. Revi
 **Workaround used**: None needed yet — not on the critical path until Phase 6.
 **What would fix this**: An escalation brief before Phase 6 begins, proposing a recommendation with tradeoffs.
 **Impact**: Low today, will block Phase 6/7 if not resolved beforehand.
+
+---
+
+## 2026-07-27 — Physical multi-device room test not performed
+
+**What I tried to do**: Satisfy the Phase 1 gate literally — "three real devices in one room advance through segments together with no state divergence."
+**Why I couldn't complete it**: No physical devices, no room, no humans present in this environment.
+**Workaround used**: Built and ran `scripts/test-phase1-multiclient.mjs` — 3 real concurrent WebSocket clients against a live `wrangler dev` instance, verifying the same convergence property (dedup, role enforcement, identical `stateVersion` across clients) the literal gate is checking for. This is a genuine functional test, not a mock, but it runs on one machine over loopback — it can't surface real device/network heterogeneity (different browsers, flaky phone wifi, clock skew).
+**What would fix this**: Jeremy (or whoever's available) runs an actual session with a laptop + 2+ phones on real wifi before this gate is trusted for a live customer session.
+**Impact**: Medium. The core mechanism is verified; the hardware-diversity dimension isn't. Acceptable to proceed to Phase 2 (which builds on the DO, not on device diversity), but flag before the first real pilot lab (Phase 8).
+
+---
+
+## 2026-07-27 — No Anthropic API key configured for the product's own runtime
+
+**What I tried to do**: Build and validate PACER's LLM-escalation path, EVALUATOR, PROBER, and SYNTHESIZER against real Anthropic API calls.
+**Why I couldn't complete it**: `ANTHROPIC_API_KEY` is not set in this environment for the *product's* Worker runtime (separate from this conversation's own model access). Confirmed via environment check, 2026-07-27.
+**Workaround used**: Built the full code paths — prompt construction, rubric-as-data passing, structured output parsing/validation — and unit-testable logic that doesn't require a live call. Cannot measure EVALUATOR's `thin`-verdict precision (the hard Phase 2 gate) without real calls against the labeled fixture set.
+**What would fix this**: Jeremy supplies a `.dev.vars`-scoped Anthropic API key (dev-tier, not production) so the eval harness can run for real.
+**Impact**: High for the Phase 2 gate specifically — it cannot be marked PASSED without this. Everything else in Phases 2, 5, and 6 (COACH's LLM personalization) that depends on live model calls carries the same blocker.
+
+---
+
+## 2026-07-27 — No Stripe test-mode credentials
+
+**What I tried to do**: Build and validate live Stripe checkout/subscription flows for Phase 7.
+**Why I couldn't complete it**: No Stripe account or test-mode API key available in this environment.
+**Workaround used**: Built the integration code (checkout session creation, webhook handler, pricing tier config) structured to take a key from environment secrets, but it has not been exercised against a real Stripe test account.
+**What would fix this**: Jeremy supplies Stripe test-mode keys.
+**Impact**: High for the Phase 7 gate (signup → trial → convert → install) — cannot be marked PASSED without a real Stripe test run.
+
+---
+
+## 2026-07-27 — No live Workers AI (Whisper) access
+
+**What I tried to do**: Validate the Phase 4 audio pipeline's transcription step and the "4 hours, zero lost chunks, <90s lag" gate.
+**Why I couldn't complete it**: Workers AI inference (including Whisper) runs against Cloudflare's remote service even under `wrangler dev` — it is not a pure local emulation like D1/R2/DO, and requires a live, billed Cloudflare account context.
+**Workaround used**: Built the capture → R2 upload → queue → transcribe → D1 pipeline code. Cannot verify real transcription latency or chunk-loss behavior.
+**What would fix this**: Jeremy attaches Cloudflare account access when ready to test this phase for real (same account-presence requirement as live D1/R2 provisioning).
+**Impact**: High for the Phase 4 gate specifically — cannot be marked PASSED without it.
