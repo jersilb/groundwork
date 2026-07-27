@@ -19,7 +19,8 @@
     "test:phase3": "node scripts/test-phase3-resilience.mjs",
     "test:phase4": "node scripts/test-phase4-audio.mjs",
     "test:synthesizer-provenance": "node --experimental-strip-types scripts/test-synthesizer-provenance.ts",
-    "test:phase5": "node scripts/test-phase5-synthesis.mjs"
+    "test:phase5": "node scripts/test-phase5-synthesis.mjs",
+    "test:phase6": "node scripts/test-phase6-program.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

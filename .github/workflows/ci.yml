@@ -113,3 +113,17 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: npm run test:phase5
+
+  phase6-program-layer:
+    name: Phase 6 gate — simulated org completes Lab 1, gets a nudge, runs a review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Apply D1 migrations locally
+        run: npx wrangler d1 migrations apply groundwork --local
+      - name: Run the full simulated-org gate test (COACH falls back to templates without a key — still satisfies the gate)
+        run: npm run test:phase6

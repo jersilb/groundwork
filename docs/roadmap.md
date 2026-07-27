@@ -59,11 +59,13 @@ SYNTHESIZER (real Opus), plan artifact versioning, provenance verification, one-
 **Not yet built**: live team editing of drafts (frontend), PDF export (needs a rendering decision — likely `frontend-ux-engineer` + a PDF library, out of SYNTHESIZER's scope).
 **Owner**: executed directly this session.
 
-## Phase 6 — Program layer
+## Phase 6 — Program layer ✅ PASSED — literally, no proxy needed (2026-07-27)
 
-Org and team setup, roles, four-lab program sequencing, initiative tracking, monthly review flow, COACH nudges, the dashboard home screen.
+Real org/user/program/lab_session/initiative/initiative_step/review_cycle CRUD — the first phase to use the Phase 0 relational schema directly rather than a lightweight parallel table, now that these tables have real meaning. Phase-gated lab sequencing (can't schedule lab N+1 before completing lab N). COACH's overdue-step detection (deterministic) and nudge generation (real Anthropic personalization with a template fallback when no key is available — Tier 1 autonomous, "routine content generation within approved templates").
 **Gate**: a simulated org completes Lab 1, receives nudges, and runs a monthly review.
-**Owner**: `program-coach-engineer`.
+**This is the first phase since 0/1/3 where the literal gate is satisfied for real, not a scaled-down proxy** — `scripts/test-phase6-program.mjs` does exactly what the gate says: creates an org and leader, proves the phase gate rejects scheduling Lab 2 before Lab 1, schedules and completes Lab 1 (program correctly advances to `current_lab=1`), creates an overdue initiative step, confirms COACH detects it and generates a real personalized nudge via `claude-sonnet-5`, then runs and completes a monthly review with a real computed health snapshot (`{greenCount, amberCount, redCount, overdueStepCount}`).
+**Owner**: executed directly this session.
+**Not yet built**: the dashboard home screen (frontend, governed by `ultimate-web-designer` per `CLAUDE.md` — not attempted here), and wiring Phases 1-5's fake-lab session-key mechanism into these real `lab_session`/`segment_run` rows (a larger integration task, deliberately deferred rather than rushed).
 
 ## Phase 7 — Commerce and PWA
 

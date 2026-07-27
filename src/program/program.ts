@@ -1,0 +1,104 @@
+import type { Env } from "../index.ts";
+
+// Program and lab sequencing — build plan §6/§7 Phase 6. Phase-gated:
+// completing one lab unlocks the next, matching "Phase-gated workflow
+// where completing one stage unlocks the next" from the BuildTrack
+// reference pattern (§1).
+
+export class LabSequenceError extends Error {}
+
+export async function createProgram(env: Env, orgId: string): Promise<string> {
+  const id = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO program (id, org_id, status, current_lab) VALUES (?1, ?2, 'not_started', 0)`,
+  )
+    .bind(id, orgId)
+    .run();
+  return id;
+}
+
+interface ProgramRow {
+  id: string;
+  current_lab: number;
+  status: string;
+}
+
+async function getProgram(env: Env, programId: string): Promise<ProgramRow | null> {
+  const row = await env.DB.prepare(`SELECT id, current_lab, status FROM program WHERE id = ?1`)
+    .bind(programId)
+    .first<ProgramRow>();
+  return row ?? null;
+}
+
+/** Only the next lab in sequence can be scheduled — this is the phase gate. */
+export async function scheduleLabSession(
+  env: Env,
+  programId: string,
+  labNumber: number,
+  scheduledFor: string,
+): Promise<string> {
+  const program = await getProgram(env, programId);
+  if (!program) throw new LabSequenceError(`program ${programId} not found`);
+  if (labNumber !== program.current_lab + 1) {
+    throw new LabSequenceError(
+      `cannot schedule lab ${labNumber} — program is at lab ${program.current_lab}; only lab ${program.current_lab + 1} can be scheduled next`,
+    );
+  }
+
+  const id = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO lab_session (id, program_id, lab_number, scheduled_for, status) VALUES (?1, ?2, ?3, ?4, 'scheduled')`,
+  )
+    .bind(id, programId, labNumber, scheduledFor)
+    .run();
+
+  if (program.status === "not_started") {
+    await env.DB.prepare(`UPDATE program SET status = 'in_progress', started_at = ?1 WHERE id = ?2`)
+      .bind(new Date().toISOString(), programId)
+      .run();
+  }
+
+  return id;
+}
+
+interface LabSessionRow {
+  id: string;
+  program_id: string;
+  lab_number: number;
+  status: string;
+}
+
+/** Completing a lab session advances the program's current_lab — the
+ * unlock step. Real program status flips to 'completed' after lab 4. */
+export async function completeLabSession(env: Env, labSessionId: string): Promise<void> {
+  const session = await env.DB.prepare(`SELECT id, program_id, lab_number, status FROM lab_session WHERE id = ?1`)
+    .bind(labSessionId)
+    .first<LabSessionRow>();
+  if (!session) throw new LabSequenceError(`lab_session ${labSessionId} not found`);
+
+  await env.DB.prepare(
+    `UPDATE lab_session SET status = 'completed', ended_at = ?1 WHERE id = ?2`,
+  )
+    .bind(new Date().toISOString(), labSessionId)
+    .run();
+
+  const program = await getProgram(env, session.program_id);
+  if (program && session.lab_number === program.current_lab + 1) {
+    const newStatus = session.lab_number === 4 ? "completed" : "in_progress";
+    await env.DB.prepare(`UPDATE program SET current_lab = ?1, status = ?2 WHERE id = ?3`)
+      .bind(session.lab_number, newStatus, session.program_id)
+      .run();
+  }
+}
+
+export async function recordConsent(env: Env, labSessionId: string, consentedBy: string): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE lab_session SET consent_recorded_at = ?1, consent_recorded_by = ?2 WHERE id = ?3`,
+  )
+    .bind(new Date().toISOString(), consentedBy, labSessionId)
+    .run();
+}
+
+export async function getProgramState(env: Env, programId: string) {
+  return getProgram(env, programId);
+}

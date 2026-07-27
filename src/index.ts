@@ -2,6 +2,7 @@ import type { SessionDO } from "./session-do.ts";
 import { handleAudioRoute } from "./audio/routes.ts";
 import { transcribeAudioChunk } from "./audio/transcribe.ts";
 import { handleSynthesisRoute } from "./synthesis/routes.ts";
+import { handleProgramRoute } from "./program/routes.ts";
 
 export { SessionDO } from "./session-do.ts";
 
@@ -36,7 +37,7 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/health") {
-      return Response.json({ status: "ok", phase: 5 });
+      return Response.json({ status: "ok", phase: 6 });
     }
 
     const audioResponse = await handleAudioRoute(request, env, url);
@@ -44,6 +45,9 @@ export default {
 
     const synthesisResponse = await handleSynthesisRoute(request, env, url);
     if (synthesisResponse) return synthesisResponse;
+
+    const programResponse = await handleProgramRoute(request, env, url);
+    if (programResponse) return programResponse;
 
     const match = url.pathname.match(SESSION_CONNECT_PATH);
     if (match) {

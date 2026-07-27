@@ -1,12 +1,12 @@
 # DASHBOARD — Groundwork
-**Last Updated**: 2026-07-27T04:52:40Z
+**Last Updated**: 2026-07-27T05:00:18Z
 **Updated by**: Claude (manual, multi-phase build session)
 
 ---
 
 ## Overall Status: 🟡 DEGRADED
 
-Phases 0, 1, 3 gates passed. Phase 2's gate was **measured for real and genuinely failed** (EVALUATOR precision 0.667 vs. the 0.8 threshold) — see Pending Decisions below. Phase 4 built; its gate needs live Cloudflare access this sandbox's network policy blocks outright. Phase 5 built and tested against real Opus; its gate needs a real human's edit-count judgment. No live customer, no revenue, no production infrastructure — nothing to break yet.
+Phases 0, 1, 3, 6 gates passed — Phase 6's fully for real, no proxy needed. Phase 2's gate was **measured for real and genuinely failed** (EVALUATOR precision 0.667 vs. the 0.8 threshold) — see Pending Decisions below. Phase 4 built; its gate needs live Cloudflare access this sandbox's network policy blocks outright. Phase 5 built and tested against real Opus; its gate needs a real human's edit-count judgment. No live customer, no revenue, no production infrastructure — nothing to break yet.
 
 ---
 
@@ -14,11 +14,11 @@ Phases 0, 1, 3 gates passed. Phase 2's gate was **measured for real and genuinel
 
 | Metric | Value | Status | Last Checked |
 |--------|-------|--------|--------------|
-| Gates passed | Phase(s) 0, 1, 3 | 🟢 | 2026-07-27T04:52:40Z |
-| Gates measured and FAILED | Phase(s) 2 | 🔴 | 2026-07-27T04:52:40Z |
-| Built, awaiting gate | Phase(s) 4, 5 | 🟡 | 2026-07-27T04:52:40Z |
-| vocabulary_lint | clean | 🟢 | 2026-07-27T04:52:40Z |
-| monthly_spend_usd | 0 | 🟢 | 2026-07-27T04:52:40Z |
+| Gates passed | Phase(s) 0, 1, 3, 6 | 🟢 | 2026-07-27T05:00:18Z |
+| Gates measured and FAILED | Phase(s) 2 | 🔴 | 2026-07-27T05:00:18Z |
+| Built, awaiting gate | Phase(s) 4, 5 | 🟡 | 2026-07-27T05:00:18Z |
+| vocabulary_lint | clean | 🟢 | 2026-07-27T05:00:18Z |
+| monthly_spend_usd | 0 | 🟢 | 2026-07-27T05:00:18Z |
 
 Full definitions and thresholds → `docs/metrics.md`.
 
@@ -49,12 +49,13 @@ Full definitions and thresholds → `docs/metrics.md`.
 - 2026-07-27: **Real Phase 2 gate measurement**: EVALUATOR precision 0.667 against real `claude-sonnet-5` — genuinely below the 0.8 threshold. Two real bugs fixed along the way (invalid `weakest_criterion`, JSON truncation); one prompt-clarity tuning attempt made no measurable difference. Flagged as a Tier 2 decision for Jeremy rather than kept under autonomous tuning.
 - 2026-07-27: Phase 4 (audio pipeline) built and its non-AI mechanics gate-verified for real: consent gating, kill switch, R2/D1/Queue dispatch, and confirmed graceful degradation when Whisper is unreachable.
 - 2026-07-27: Phase 5 (synthesis) built and tested against real `claude-opus-5`. Found and fixed a real data-model bug live (two distinct risks in one synthesis pass would have wrongly overwritten each other) by splitting artifact kinds into singular/versioned vs. plural/additive. Provenance verification (rejecting fabricated quotes) proven with a deterministic test.
+- 2026-07-27: Phase 6 (program layer) built and its gate **passed for real, no proxy needed** — first phase since 0/1/3. Real org/program/lab_session/initiative/review_cycle CRUD, phase-gated lab sequencing, and COACH (real personalized nudges with a template fallback for Tier 1 autonomy).
 
 ---
 
 ## Next 7 Days (Planned)
 
-- Continue building Phases 6–7 per Jeremy's instruction. Phase 7's gate stays flagged unverified — Stripe's API is network-blocked from this sandbox regardless of the key Jeremy supplied (`docs/capability-gaps.md`).
+- Continue building Phase 7 per Jeremy's instruction. Its gate stays flagged unverified — Stripe's API is network-blocked from this sandbox regardless of the key Jeremy supplied (`docs/capability-gaps.md`).
 - Before the first real pilot: run the literal Phase 1 (physical multi-device), Phase 3 (6 clients / 10 minutes), and Phase 5 (real leader edit count) gates for real, and get Phase 4's real Whisper test run from an environment that can reach Cloudflare.
 - Awaiting Jeremy's call on the Phase 2 gate decision above.
 
