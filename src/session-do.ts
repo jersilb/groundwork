@@ -29,9 +29,13 @@ interface SocketAttachment {
  * the Worker used to call `idFromName`. Single authoritative in-memory
  * (+ durable-storage-backed) copy of session state, per build plan §3.2.
  *
- * Phase 1 scope: WebSocket fanout, segment advance, D1 checkpointing.
- * NOT in scope here: reconnect/replay/dedup-on-reconnect (Phase 3),
- * real curriculum specs (Phase 2), org/program wiring (Phase 6).
+ * Phase 1: WebSocket fanout, segment advance, D1 checkpointing.
+ * Phase 3 added: vote recording with per-field logical-clock reconciliation
+ * (recordVote) — reconnect/replay itself lives client-side (test/resilience/
+ * client.js); the server's job is just correct, idempotent handling of
+ * whatever a client sends, which the Phase 1 dedup design already provided.
+ * NOT in scope here: real curriculum specs (Phase 2 loader, not this file),
+ * org/program wiring (Phase 6), degraded-mode prompt cache (Phase 5/6).
  */
 export class SessionDO extends DurableObject<Env> {
   private state: SessionState | null = null;
@@ -54,6 +58,7 @@ export class SessionDO extends DurableObject<Env> {
       segments: FAKE_LAB_SEGMENTS,
       submissionCounts: Object.fromEntries(FAKE_LAB_SEGMENTS.map((s) => [s.key, 0])),
       submittedClientUuids: Object.fromEntries(FAKE_LAB_SEGMENTS.map((s) => [s.key, []])),
+      votes: Object.fromEntries(FAKE_LAB_SEGMENTS.map((s) => [s.key, {}])),
       startedAt: new Date().toISOString(),
     };
   }
@@ -121,6 +126,9 @@ export class SessionDO extends DurableObject<Env> {
       case "submit":
         this.recordSubmission(message.segmentKey, message.clientUuid);
         break;
+      case "vote":
+        this.recordVote(message.segmentKey, message.voterUuid, message.optionId, message.logicalClock);
+        break;
       default:
         this.sendTo(ws, { type: "error", message: "unknown message type" });
         return;
@@ -132,11 +140,15 @@ export class SessionDO extends DurableObject<Env> {
 
   async webSocketClose(_ws: WebSocket, _code: number, _reason: string, _wasClean: boolean): Promise<void> {
     // Hibernation API removes closed sockets from ctx.getWebSockets()
-    // automatically. Reconnect/replay handling is Phase 3 scope.
+    // automatically. Nothing server-side to do on disconnect — replay is
+    // entirely client-driven (test/resilience/client.js): the client
+    // resends from its local queue on reconnect, and this DO's existing
+    // dedup (recordSubmission) / logical-clock check (recordVote) make
+    // that safe to receive twice.
   }
 
   async webSocketError(_ws: WebSocket, _error: unknown): Promise<void> {
-    // Same as close — Phase 3 owns reconnect handling.
+    // Same as close.
   }
 
   async alarm(): Promise<void> {
@@ -160,6 +172,24 @@ export class SessionDO extends DurableObject<Env> {
     seen.push(clientUuid);
     s.submittedClientUuids[segmentKey] = seen;
     s.submissionCounts[segmentKey] = (s.submissionCounts[segmentKey] ?? 0) + 1;
+    s.stateVersion += 1;
+  }
+
+  /**
+   * Reconciles by logicalClock, NOT arrival order or wall-clock time.
+   * Build plan §3.3: "last-write-wins is wrong here — use per-field vector
+   * timestamps for submissions." A queued offline vote replayed after
+   * reconnect only overwrites the stored vote if its logical clock is
+   * strictly newer, so an out-of-order replay can never clobber a vote
+   * the same voter cast more recently on another connection.
+   */
+  private recordVote(segmentKey: string, voterUuid: string, optionId: string, logicalClock: number): void {
+    const s = this.state!;
+    const segmentVotes = s.votes[segmentKey] ?? {};
+    const existing = segmentVotes[voterUuid];
+    if (existing && existing.logicalClock >= logicalClock) return; // stale replay, ignore
+    segmentVotes[voterUuid] = { optionId, logicalClock };
+    s.votes[segmentKey] = segmentVotes;
     s.stateVersion += 1;
   }
 

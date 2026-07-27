@@ -37,12 +37,12 @@ def load_previous_phase_fields():
     # Phase gate status is tracked manually in docs/roadmap.md for now and
     # carried forward here. A phase can be built without its gate passing
     # (docs/metrics.md, 2026-07-27) — never collapse these into one number.
-    defaults = {"last_gate_passed_phase": 0, "phases_built_awaiting_gate": []}
+    defaults = {"gates_passed": [], "phases_built_awaiting_gate": []}
     if STATUS_PATH.exists():
         try:
             prev = json.loads(STATUS_PATH.read_text())
             return {
-                "last_gate_passed_phase": prev.get("last_gate_passed_phase", 0),
+                "gates_passed": prev.get("gates_passed", []),
                 "phases_built_awaiting_gate": prev.get("phases_built_awaiting_gate", []),
             }
         except (json.JSONDecodeError, OSError):

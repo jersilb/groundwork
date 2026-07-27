@@ -26,12 +26,14 @@ def render_overall(status):
 
 
 def render_metrics_table(status):
+    passed = status.get("gates_passed", [])
+    passed_str = ", ".join(str(p) for p in passed) if passed else "none"
     awaiting = status.get("phases_built_awaiting_gate", [])
     awaiting_str = ", ".join(str(p) for p in awaiting) if awaiting else "none"
     rows = [
         "| Metric | Value | Status | Last Checked |",
         "|--------|-------|--------|--------------|",
-        f"| Last gate passed | Phase {status.get('last_gate_passed_phase', 0)} | 🟢 | {status['updated_at']} |",
+        f"| Gates passed | Phase(s) {passed_str} | 🟢 | {status['updated_at']} |",
         f"| Built, awaiting gate | Phase(s) {awaiting_str} | 🟡 | {status['updated_at']} |",
     ]
     for name, m in status["metrics"].items():

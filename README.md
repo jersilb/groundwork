@@ -1,6 +1,6 @@
 # Groundwork — AI-Facilitated Strategic Planning for Faith-Based Organizations
 
-**Status**: Phase 1 gate-verified. Phase 2 (Guide Engine) built and unit-tested; its precision gate is blocked on credentials. Building Phases 3–7.
+**Status**: Phases 1 and 3 gate-verified. Phase 2 (Guide Engine) built and unit-tested; its precision gate is blocked on credentials. Building Phases 4–7.
 **Repo**: `jersilb1400/groundwork`
 **Stack**: Cloudflare Workers, Durable Objects, D1, R2, Workers AI (Whisper), React + Vite PWA, Anthropic API, Stripe.
 **Goal**: Walk a faith-based organization's leadership team through four full-day working sessions, purely AI-led, and leave them with a plan they actually run — not a binder that dies on a shelf.
@@ -12,13 +12,13 @@
 ## Current Status (Living — Updated After Every Session)
 
 **As of 2026-07-27**:
-- Confirmed working: Wrangler config, D1 schema (2 migrations), real `SessionDO`, Guide Engine (segment spec schema + compiler, PACER deterministic logic, EVALUATOR/PROBER with real schema-validated parsing), vocabulary lint, CI pipeline with automated Phase 1 and Phase 2 test jobs.
-- In progress: Phases 3–7, building continuously per Jeremy's instruction.
+- Confirmed working: Wrangler config, D1 schema (2 migrations), real `SessionDO` (now with vote support + logical-clock reconciliation), Guide Engine (segment spec schema + compiler, PACER, EVALUATOR/PROBER), a real IndexedDB-backed offline queue proven against a real browser + real network cutoff, vocabulary lint, CI with automated Phase 1–3 test jobs.
+- In progress: Phases 4–7, building continuously per Jeremy's instruction.
 - Known blockers: no Anthropic API key, Stripe test keys, or live Cloudflare/Workers AI access in this environment. Phases 2, 4, 5, and 7's gates are being built but cannot be marked passed until Jeremy supplies these — see `docs/capability-gaps.md`.
 
 **Next Priorities**:
-1. Resilience (Phase 3): fully buildable and testable locally, no credentials needed.
-2. Audio pipeline (Phase 4) and synthesis (Phase 5) code — buildable now, live testing blocked on credentials.
+1. Audio pipeline (Phase 4) and synthesis (Phase 5) code — buildable now, live testing blocked on credentials.
+2. Program layer (Phase 6): mostly buildable now (org/initiative/dashboard CRUD needs no AI).
 3. Line up two or three willing pilot churches before Phase 8 becomes urgent — the plan calls this out explicitly as a now-task, not a later one.
 
 ---

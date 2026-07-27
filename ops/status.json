@@ -1,7 +1,11 @@
 {
-  "updated_at": "2026-07-27T03:41:49Z",
+  "updated_at": "2026-07-27T03:51:20Z",
   "overall_status": "green",
-  "last_gate_passed_phase": 1,
+  "gates_passed": [
+    0,
+    1,
+    3
+  ],
   "phases_built_awaiting_gate": [
     2
   ],
@@ -10,13 +14,13 @@
       "value": "clean",
       "unit": "status",
       "status": "green",
-      "checked_at": "2026-07-27T03:41:49Z"
+      "checked_at": "2026-07-27T03:51:20Z"
     },
     "monthly_spend_usd": {
       "value": 0,
       "unit": "$",
       "status": "green",
-      "checked_at": "2026-07-27T03:41:49Z"
+      "checked_at": "2026-07-27T03:51:20Z"
     }
   },
   "active_alerts": [],

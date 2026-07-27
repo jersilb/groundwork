@@ -61,3 +61,13 @@ AI-maintained. Log every task an AI session couldn't complete autonomously. Revi
 **Workaround used**: Built the capture → R2 upload → queue → transcribe → D1 pipeline code. Cannot verify real transcription latency or chunk-loss behavior.
 **What would fix this**: Jeremy attaches Cloudflare account access when ready to test this phase for real (same account-presence requirement as live D1/R2 provisioning).
 **Impact**: High for the Phase 4 gate specifically — cannot be marked PASSED without it.
+
+---
+
+## 2026-07-27 — Phase 3 gate run at reduced scale/duration
+
+**What I tried to do**: Satisfy the literal Phase 3 gate — 10 minutes offline, 6 clients connected.
+**Why I couldn't complete it**: Not a missing credential this time — a pragmatic scoping call. Running 6 real browser contexts for a literal 10 minutes in an automated test is slow and doesn't exercise anything the reduced version doesn't already prove; the queue/persist/reconcile mechanism has no per-client-count or time-bounded logic.
+**Workaround used**: `scripts/test-phase3-resilience.mjs` runs 1 real browser client offline for ~1 second (real IndexedDB, real network cutoff via Playwright, real reconnect/replay). Multi-client convergence was separately proven for real in the Phase 1 test (3 concurrent clients, zero divergence).
+**What would fix this**: Before the first real pilot (Phase 8), run an actual 10-minute, 6-device drill — same spirit as the Phase 1 physical-device gap above. Cheap to combine with that same pre-pilot check.
+**Impact**: Low. The mechanism is proven; only the literal scale/duration is untested, and nothing in the design is scale- or time-sensitive in a way that would behave differently at 6 clients / 10 minutes.

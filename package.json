@@ -14,7 +14,8 @@
     "test:phase1": "node scripts/test-phase1-multiclient.mjs",
     "test:eval-harness": "node --experimental-strip-types scripts/run-eval-harness.ts",
     "test:pacer": "node --experimental-strip-types scripts/test-pacer.ts",
-    "test:evaluator-prober-parsing": "node --experimental-strip-types scripts/test-evaluator-prober-parsing.ts"
+    "test:evaluator-prober-parsing": "node --experimental-strip-types scripts/test-evaluator-prober-parsing.ts",
+    "test:phase3": "node scripts/test-phase3-resilience.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.0.0",
+    "playwright": "^1.0.0",
     "typescript": "^7.0.0",
     "wrangler": "^4.0.0",
     "yaml": "^2.0.0"

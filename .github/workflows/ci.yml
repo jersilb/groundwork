@@ -66,3 +66,17 @@ jobs:
         run: npm run test:evaluator-prober-parsing
       - name: Eval harness (self-test mode — no ANTHROPIC_API_KEY in CI yet)
         run: npm run test:eval-harness
+
+  phase3-resilience:
+    name: Phase 3 gate — offline queue, IndexedDB persistence, reconnect
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Install Playwright's Chromium (CI runner, not the dev sandbox)
+        run: npx playwright install --with-deps chromium
+      - name: Run the real-browser network-cutoff/reconnect test
+        run: node scripts/test-phase3-resilience.mjs
