@@ -1,12 +1,12 @@
 # DASHBOARD — Groundwork
-**Last Updated**: 2026-07-27T03:28:07Z
+**Last Updated**: 2026-07-27T03:41:49Z
 **Updated by**: Claude (manual, multi-phase build session)
 
 ---
 
 ## Overall Status: 🟢 HEALTHY
 
-Phase 0 and Phase 1 gates passed. Phase 1's gate was verified via an automated 3-client proxy test, not the literal physical-device room test (open item, see `docs/capability-gaps.md`). No live customer, no revenue, no production infrastructure — nothing to break yet.
+Phases 0–1 gates passed. Phase 2 (Guide Engine) is built and unit-tested but its precision gate is honestly unverified — blocked on an Anthropic API key this environment doesn't have (`docs/capability-gaps.md`). No live customer, no revenue, no production infrastructure — nothing to break yet.
 
 ---
 
@@ -14,9 +14,10 @@ Phase 0 and Phase 1 gates passed. Phase 1's gate was verified via an automated 3
 
 | Metric | Value | Status | Last Checked |
 |--------|-------|--------|--------------|
-| Current phase | 1 | 🟢 | 2026-07-27T03:28:07Z |
-| vocabulary_lint | clean | 🟢 | 2026-07-27T03:28:07Z |
-| monthly_spend_usd | 0 | 🟢 | 2026-07-27T03:28:07Z |
+| Last gate passed | Phase 1 | 🟢 | 2026-07-27T03:41:49Z |
+| Built, awaiting gate | Phase(s) 2 | 🟡 | 2026-07-27T03:41:49Z |
+| vocabulary_lint | clean | 🟢 | 2026-07-27T03:41:49Z |
+| monthly_spend_usd | 0 | 🟢 | 2026-07-27T03:41:49Z |
 
 Full definitions and thresholds → `docs/metrics.md`.
 

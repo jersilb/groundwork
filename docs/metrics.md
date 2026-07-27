@@ -54,7 +54,8 @@ None of these are measurable until real sessions run (Phase 1+). Track them from
 {
   "updated_at": "ISO8601 timestamp",
   "overall_status": "green | yellow | red",
-  "current_phase": 0,
+  "last_gate_passed_phase": 0,
+  "phases_built_awaiting_gate": [],
   "metrics": {
     "metric_name": {
       "value": 0,
@@ -67,6 +68,8 @@ None of these are measurable until real sessions run (Phase 1+). Track them from
   "pending_escalations": []
 }
 ```
+
+`last_gate_passed_phase` vs `phases_built_awaiting_gate` (added 2026-07-27): a phase can have real, working code without its gate being verifiably passed — e.g. Phase 2's EVALUATOR precision gate needs a live Anthropic key this environment doesn't have. Never collapse these into one "current phase" number; that erases the distinction the anchors principle (`docs/agent-team.md` §5) depends on.
 
 ---
 

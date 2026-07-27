@@ -33,17 +33,21 @@ def check_vocabulary_lint(verbose):
     return "clean" if result.returncode == 0 else "failed"
 
 
-def current_phase():
-    # Phase is tracked manually in docs/roadmap.md / DASHBOARD.md for now.
-    # This stub reads it from ops/status.json's previous value if present,
-    # defaulting to 0. Update this once program.current_lab exists in D1.
+def load_previous_phase_fields():
+    # Phase gate status is tracked manually in docs/roadmap.md for now and
+    # carried forward here. A phase can be built without its gate passing
+    # (docs/metrics.md, 2026-07-27) — never collapse these into one number.
+    defaults = {"last_gate_passed_phase": 0, "phases_built_awaiting_gate": []}
     if STATUS_PATH.exists():
         try:
             prev = json.loads(STATUS_PATH.read_text())
-            return prev.get("current_phase", 0)
+            return {
+                "last_gate_passed_phase": prev.get("last_gate_passed_phase", 0),
+                "phases_built_awaiting_gate": prev.get("phases_built_awaiting_gate", []),
+            }
         except (json.JSONDecodeError, OSError):
             pass
-    return 0
+    return defaults
 
 
 def build_status(verbose=False):
@@ -74,7 +78,7 @@ def build_status(verbose=False):
     return {
         "updated_at": now_iso(),
         "overall_status": overall,
-        "current_phase": current_phase(),
+        **load_previous_phase_fields(),
         "metrics": metrics,
         "active_alerts": [],
         "pending_escalations": [],

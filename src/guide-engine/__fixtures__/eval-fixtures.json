@@ -1,0 +1,37 @@
+{
+  "note": "SYNTHETIC test fixtures for the eval harness's own mechanics (confusion matrix / precision / recall math). Generic secular scenarios, not real curriculum. Real labeled fixtures (per build plan §5.6: ~200 per segment, hand-labeled) are a Phase 2 deliverable still pending real domain review — this set proves the harness works, it is not that deliverable.",
+  "segment": {
+    "key": "_eval_harness_test_segment",
+    "lab": 1,
+    "title": "Test segment for eval harness",
+    "planned_minutes": 30,
+    "input_mode": "phone_submit_then_discuss",
+    "min_submissions": 2,
+    "objective": "Synthetic objective: surface specific, evidence-based organizational health signals.",
+    "rubric": [
+      { "id": "specificity", "check": "Names a concrete observable, not an abstraction" },
+      { "id": "evidence", "check": "Points to something measurable or witnessed" }
+    ],
+    "exit_criteria": ["min_submissions_met"],
+    "produces": [{ "artifact": "_test_artifact" }],
+    "fallback_if_stuck": []
+  },
+  "cases": [
+    { "id": "case-01", "expectedVerdict": "on_track", "submissions": ["Attendance dropped from 340 to 265 over the last 12 months, a 22% decline concentrated in the 18-34 age group.", "Revenue per customer fell 8% in Q3 compared to Q2, driven mainly by the North region."] },
+    { "id": "case-02", "expectedVerdict": "thin", "submissions": ["Things have been pretty good overall.", "We're doing fine, no real complaints."] },
+    { "id": "case-03", "expectedVerdict": "thin", "submissions": ["We remain committed to excellence and driving synergy across all teams.", "Our culture of continuous improvement continues to deliver value."] },
+    { "id": "case-04", "expectedVerdict": "off_track", "submissions": [] },
+    { "id": "case-05", "expectedVerdict": "off_track", "submissions": ["I like pizza.", "The weather has been nice lately."] },
+    { "id": "case-06", "expectedVerdict": "conflict", "submissions": ["Membership is up 15% this year.", "Membership is down sharply, we've lost a third of our base."] },
+    { "id": "case-07", "expectedVerdict": "on_track", "submissions": ["Volunteer sign-ups fell from 48 to 31 this quarter, and exit surveys cite scheduling conflicts as the top reason (60% of respondents).", "Facility maintenance requests increased 3x since March, mostly HVAC-related."] },
+    { "id": "case-08", "expectedVerdict": "thin", "submissions": ["We've made some progress but there's more work to do.", "Some areas are stronger than others."] },
+    { "id": "case-09", "expectedVerdict": "on_track", "submissions": ["Two of the five leadership team seats have turned over in the past year.", "The budget shortfall is $42,000 against a $310,000 annual operating budget."] },
+    { "id": "case-10", "expectedVerdict": "thin", "submissions": ["Morale seems okay.", "People seem engaged for the most part."] },
+    { "id": "case-11", "expectedVerdict": "off_track", "submissions": ["Someone should fix the coffee machine.", "Parking is annoying sometimes."] },
+    { "id": "case-12", "expectedVerdict": "conflict", "submissions": ["Program costs are increasing 10% a year and we can't sustain it.", "Costs have actually been decreasing, I don't see the problem."] },
+    { "id": "case-13", "expectedVerdict": "on_track", "submissions": ["Three of four youth programs saw enrollment drop by double digits, the exception being the Wednesday cohort which grew 12%.", "Staff turnover hit 40% this year versus a historical average of 15%."] },
+    { "id": "case-14", "expectedVerdict": "thin", "submissions": ["We're a family here.", "Everyone cares about each other."] },
+    { "id": "case-15", "expectedVerdict": "thin", "submissions": ["Communication could be better.", "Sometimes things fall through the cracks."] },
+    { "id": "case-16", "expectedVerdict": "on_track", "submissions": ["Two big donors representing 35% of annual giving have not renewed as of this month.", "The facility's roof needs an estimated $80,000 in repairs within 18 months per the last inspection."] }
+  ]
+}

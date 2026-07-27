@@ -48,3 +48,21 @@ jobs:
         run: npx wrangler d1 migrations apply groundwork --local
       - name: Run the automated multi-client convergence test
         run: node scripts/test-phase1-multiclient.mjs
+
+  phase2-guide-engine:
+    name: Phase 2 gate — PACER/EVALUATOR/PROBER + segment spec compiler
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Compile segment specs (proves the loader/compiler works)
+        run: npm run specs:compile
+      - name: PACER deterministic logic tests
+        run: npm run test:pacer
+      - name: EVALUATOR/PROBER parsing and validation tests
+        run: npm run test:evaluator-prober-parsing
+      - name: Eval harness (self-test mode — no ANTHROPIC_API_KEY in CI yet)
+        run: npm run test:eval-harness

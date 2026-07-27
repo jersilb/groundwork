@@ -20,11 +20,14 @@ Durable Object with WebSocket fanout, hibernation API, join by session key, stat
 **Owner**: executed directly this session.
 **Not yet built** (explicitly out of Phase 1 scope): join-by-human-typeable-code UX (needs Phase 6's program layer), reconnect/replay (Phase 3), real curriculum specs (Phase 2).
 
-## Phase 2 — Guide Engine
+## Phase 2 — Guide Engine 🟡 BUILT — gate blocked on credentials (2026-07-27)
 
-Segment spec loader. PACER, EVALUATOR, PROBER as separate agents with structured outputs. Eval suite with labeled fixtures. Instrumentation on every LLM call.
+Segment spec schema + compiler (YAML → generated TS, since Workers have no runtime filesystem), PACER, EVALUATOR, PROBER as separate agents with structured outputs, an eval harness, a pluggable LLM client (real Anthropic + test doubles).
 **Gate**: EVALUATOR precision above 0.8 on the `thin` verdict against the labeled fixture set. **Do not proceed below this.**
-**Owner**: `guide-engine-architect` (design) → `evaluator-engineer` (implementation).
+**What's actually verified**: PACER's deterministic logic (6/6 automated checks), EVALUATOR/PROBER's parsing and schema validation against a fixed fake client (7/7 checks), the segment spec compiler end-to-end, and the eval harness's own confusion-matrix math (precision/recall arithmetic proven correct against a 16-case fixture set, using a heuristic stand-in since no Anthropic key is configured here).
+**What's NOT verified — the gate itself**: real EVALUATOR precision against genuine model judgment. Blocked on an `ANTHROPIC_API_KEY` for the product's runtime (`docs/capability-gaps.md`, 2026-07-27). The 16 fixture cases are also far short of the ~200/segment the plan calls for in §5.6 — that's real curriculum-scale fixture authoring, appropriately later-phase work.
+**Owner**: executed directly this session (schema design work `guide-engine-architect` would own; implementation `evaluator-engineer` would own).
+**Not yet built**: real curriculum content (blocked on `docs/source-principles.md`), conflict-handling UI flow (§5.4 — needs `frontend-ux-engineer` + Phase 6 wiring), leader-override wiring into the session spine.
 
 ## Phase 3 — Resilience
 

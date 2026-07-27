@@ -1,6 +1,6 @@
-import type { SessionDO } from "./session-do";
+import type { SessionDO } from "./session-do.ts";
 
-export { SessionDO } from "./session-do";
+export { SessionDO } from "./session-do.ts";
 
 export interface Env {
   SESSION_DO: DurableObjectNamespace<SessionDO>;

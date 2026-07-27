@@ -1,12 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
-import type { Env } from "./index";
+import type { Env } from "./index.ts";
 import type {
   ClientRole,
   ClientToServerMessage,
   SegmentDef,
   ServerToClientMessage,
   SessionState,
-} from "./session-protocol";
+} from "./session-protocol.ts";
 
 // Phase 1 hardcoded fake lab (build plan §7 Phase 1: "Segment advance,
 // hardcoded three-segment fake lab. No AI yet."). Real segment specs load

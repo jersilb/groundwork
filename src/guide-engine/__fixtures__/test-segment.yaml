@@ -1,0 +1,24 @@
+# SYNTHETIC TEST FIXTURE — not real curriculum, never ships in content/packs/.
+# Exists only to prove scripts/compile-segment-specs.ts and the loader work.
+# Real Lab 1 content is curriculum-author's job, gated on docs/source-principles.md
+# having entries (it doesn't yet). See docs/decisions.md, 2026-07-27.
+segment:
+  key: _test_loader_smoke
+  lab: 1
+  title: "Test fixture: loader smoke test"
+  planned_minutes: 5
+  input_mode: phone_submit_then_discuss
+  min_submissions: 2
+  objective: >
+    Synthetic placeholder objective used only to exercise the segment spec
+    loader and schema validation. Not a real exercise.
+  rubric:
+    - id: placeholder_criterion
+      check: "Placeholder check text for schema validation testing only."
+      fail_example_shape: "placeholder failure shape"
+  exit_criteria:
+    - min_submissions_met
+  produces:
+    - artifact: _test_artifact
+  fallback_if_stuck:
+    - leader_seeds_example

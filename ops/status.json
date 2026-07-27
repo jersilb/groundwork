@@ -1,19 +1,22 @@
 {
-  "updated_at": "2026-07-27T03:28:07Z",
+  "updated_at": "2026-07-27T03:41:49Z",
   "overall_status": "green",
-  "current_phase": 1,
+  "last_gate_passed_phase": 1,
+  "phases_built_awaiting_gate": [
+    2
+  ],
   "metrics": {
     "vocabulary_lint": {
       "value": "clean",
       "unit": "status",
       "status": "green",
-      "checked_at": "2026-07-27T03:28:07Z"
+      "checked_at": "2026-07-27T03:41:49Z"
     },
     "monthly_spend_usd": {
       "value": 0,
       "unit": "$",
       "status": "green",
-      "checked_at": "2026-07-27T03:28:07Z"
+      "checked_at": "2026-07-27T03:41:49Z"
     }
   },
   "active_alerts": [],
