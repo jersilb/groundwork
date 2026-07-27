@@ -95,3 +95,13 @@ AI-maintained. Log every task an AI session couldn't complete autonomously. Revi
 **Workaround used**: Built and real-tested the mechanism that produces the draft (SYNTHESIZER, versioning, one-pager assembly) against live Opus. `scripts/test-phase5-synthesis.mjs` prints the real generated content so a human can look at it, but does not and cannot score it against the 5-edit threshold itself.
 **What would fix this**: Run a real simulated lab with Jeremy (or another real leader) reading the actual generated one-pager and counting edits, before this gate is trusted for a live pilot.
 **Impact**: Low for continued building — same category as the Phase 1 physical-device gap (mechanism proven, human-judgment dimension isn't, and doesn't need to block further phases). High before Phase 8's real pilot.
+
+---
+
+## 2026-07-27 — Phase 7's literal "installs on iOS and Android" gate needs real physical devices
+
+**What I tried to do**: Satisfy the Phase 7 gate literally — confirm the PWA installs to a home screen on a real iOS device and a real Android device.
+**Why I couldn't complete it**: No physical phones exist in this sandbox (same underlying limitation as Phase 1's physical-multi-device gap). Additionally, iOS Safari has no equivalent of Chrome's `Page.getInstallabilityErrors` CDP call or `beforeinstallprompt` event at all — "Add to Home Screen" on iOS is a manual user action from the share sheet regardless of manifest quality, so even a real device test on iOS measures something structurally different from Android's automatic install prompt.
+**Workaround used**: `scripts/test-phase7-pwa.mjs` asks Chrome's own DevTools Protocol whether the PWA meets Chrome/Android's real installability criteria — the actual mechanism Chrome uses, not a guess — and gets back zero real errors (see `docs/decisions.md`, 2026-07-27). This proves the manifest, service worker, and icons are correct by the same standard Android Chrome applies. It does not, and cannot, prove anything about the iOS Add-to-Home-Screen experience specifically, since no automatable equivalent exists.
+**What would fix this**: Before the first real pilot (Phase 8), manually install the deployed PWA on one real iOS device and one real Android device and confirm both succeed — cheap to combine with the Phase 1 and Phase 3 physical-device drills already queued for that pre-pilot check.
+**Impact**: Low for continued building (the underlying mechanism is proven correct by the strongest automatable standard available). Required before Phase 8's real pilot, same as the other physical-device gaps.

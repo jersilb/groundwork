@@ -67,11 +67,15 @@ Real org/user/program/lab_session/initiative/initiative_step/review_cycle CRUD �
 **Owner**: executed directly this session.
 **Not yet built**: the dashboard home screen (frontend, governed by `ultimate-web-designer` per `CLAUDE.md` — not attempted here), and wiring Phases 1-5's fake-lab session-key mechanism into these real `lab_session`/`segment_run` rows (a larger integration task, deliberately deferred rather than rushed).
 
-## Phase 7 — Commerce and PWA
+## Phase 7 — Commerce and PWA 🟡 BUILT — PWA sub-gate PASSED for real, commerce sub-gate needs live Stripe access (2026-07-27)
 
-Stripe tiers, trial, billing portal, PWA manifest and install prompt, service worker.
+Stripe subscription tiers matching build plan §9's bands exactly (`under_250k`/`250k_to_1m`/`1m_to_5m`/`5m_plus`, monthly + annual), checkout session creation, billing portal, webhook signature verification, a value-based free trial (`TRIAL_SEGMENT_LIMIT`). PWA manifest, service worker (cache-first app shell), real generated icon files, installable shell page.
 **Gate**: a test org signs up, trials, converts, and can install to home screen on iOS and Android.
-**Owner**: `commerce-pwa-engineer`.
+**What's actually verified — the PWA half, for real**: `scripts/test-phase7-pwa.mjs` asks Chrome's own DevTools Protocol (`Page.getInstallabilityErrors`) — the actual mechanism Chrome/Android use to decide whether to offer install, not a guess at the criteria. Confirms the manifest is linked and fetchable with all required fields, the service worker registers and reaches `active`, both icon files load with substantive (non-stub) content, and Chrome reports **zero real installability errors** (the one error Chrome does report, `in-incognito`, is an unavoidable artifact of Playwright's ephemeral browser profile, not a defect in the PWA — filtered out explicitly, every other error class is treated as a genuine finding).
+**What's actually verified — the commerce half**: pricing math (`computePriceUsd` against all four bands and both billing cycles) and Stripe webhook signature verification (`scripts/test-stripe-webhook-verification.ts` — 4/4 deterministic tests: valid signature accepted, tampered payload rejected, wrong secret rejected, malformed header rejected, using `stripe.webhooks.generateTestHeaderString` — pure crypto, no network call). The Stripe SDK is wired for Workers (`Stripe.createFetchHttpClient()`, no Node runtime dependency).
+**What's NOT verified — the gate itself**: real checkout session creation and real billing-portal redirects need a live call to `api.stripe.com`, which this sandbox's outbound proxy denies regardless of the valid secret key Jeremy supplied (`docs/capability-gaps.md`, 2026-07-27 entry). The literal "install to home screen on iOS and Android" also can't be run here — no physical devices exist in this sandbox, and iOS Safari has no CDP installability API at all (Add to Home Screen is manual on iOS regardless of manifest quality, unlike Chrome/Android's `beforeinstallprompt` flow) — logged as a capability gap, same category as Phase 1's physical-device gate.
+**Owner**: executed directly this session (`commerce-pwa-engineer`'s scope).
+**Not yet built**: the actual signup/trial/paywall UI screens and the install-prompt UX — `frontend-ux-engineer` + `ultimate-web-designer` territory per `CLAUDE.md`.
 
 ## Phase 8 — Church pack and pilot
 

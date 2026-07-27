@@ -3,6 +3,7 @@ import { handleAudioRoute } from "./audio/routes.ts";
 import { transcribeAudioChunk } from "./audio/transcribe.ts";
 import { handleSynthesisRoute } from "./synthesis/routes.ts";
 import { handleProgramRoute } from "./program/routes.ts";
+import { handleCommerceRoute } from "./commerce/routes.ts";
 
 export { SessionDO } from "./session-do.ts";
 
@@ -18,6 +19,8 @@ export interface Env {
   TRANSCRIPTION_QUEUE: Queue<TranscriptionQueueMessage>;
   AI: Ai;
   ANTHROPIC_API_KEY?: string;
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
 }
 
 const SESSION_CONNECT_PATH = /^\/session\/([A-Za-z0-9_-]+)\/connect$/;
@@ -37,7 +40,7 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/health") {
-      return Response.json({ status: "ok", phase: 6 });
+      return Response.json({ status: "ok", phase: 7 });
     }
 
     const audioResponse = await handleAudioRoute(request, env, url);
@@ -48,6 +51,9 @@ export default {
 
     const programResponse = await handleProgramRoute(request, env, url);
     if (programResponse) return programResponse;
+
+    const commerceResponse = await handleCommerceRoute(request, env, url);
+    if (commerceResponse) return commerceResponse;
 
     const match = url.pathname.match(SESSION_CONNECT_PATH);
     if (match) {

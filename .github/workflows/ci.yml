@@ -127,3 +127,19 @@ jobs:
         run: npx wrangler d1 migrations apply groundwork --local
       - name: Run the full simulated-org gate test (COACH falls back to templates without a key — still satisfies the gate)
         run: npm run test:phase6
+
+  phase7-commerce-pwa:
+    name: Phase 7 gate — Stripe webhook verification, PWA installability
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Install Playwright's Chromium (CI runner, not the dev sandbox)
+        run: npx playwright install --with-deps chromium
+      - name: Stripe webhook signature verification (pure crypto, no network/key needed)
+        run: npm run test:stripe-webhook
+      - name: PWA installability check via Chrome DevTools Protocol (manifest, service worker, icons)
+        run: npm run test:phase7

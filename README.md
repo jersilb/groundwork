@@ -1,6 +1,6 @@
 # Groundwork — AI-Facilitated Strategic Planning for Faith-Based Organizations
 
-**Status**: Phases 1, 3, and 6 gate-verified (6 with no proxy needed — the literal gate, fully). Phase 2's gate genuinely measured and failed (0.667 precision vs 0.8 — Jeremy's call on next steps). Phases 4 and 5 built and tested against real services; their literal gates need things this sandbox can't provide (network access, a real human). Building Phase 7.
+**Status**: Phases 1, 3, and 6 gate-verified (6 with no proxy needed — the literal gate, fully). Phase 2's gate genuinely measured and failed (0.667 precision vs 0.8 — Jeremy's call on next steps). Phases 4, 5, and 7 built and tested against real services; their literal gates need things this sandbox can't provide (network access, a real human, real phones) — Phase 7's PWA sub-gate is the exception, passed for real via Chrome's own installability check. All 8 build-plan phases now have a scaffold; Phase 8 needs Jeremy's curriculum content and a real pilot church.
 **Repo**: `jersilb1400/groundwork`
 **Stack**: Cloudflare Workers, Durable Objects, D1, R2, Workers AI (Whisper), React + Vite PWA, Anthropic API, Stripe.
 **Goal**: Walk a faith-based organization's leadership team through four full-day working sessions, purely AI-led, and leave them with a plan they actually run — not a binder that dies on a shelf.
@@ -12,17 +12,18 @@
 ## Current Status (Living — Updated After Every Session)
 
 **As of 2026-07-27**:
-- Confirmed working: Wrangler config, D1 schema (4 migrations), real `SessionDO` (vote support + logical-clock reconciliation), Guide Engine (segment spec schema + compiler, PACER, EVALUATOR/PROBER), real IndexedDB-backed offline queue, real audio pipeline mechanics (consent, kill switch, R2/D1/Queue), real SYNTHESIZER with provenance verification and artifact versioning, real program layer (org/program/lab_session/initiative/review_cycle CRUD, phase-gated lab sequencing, COACH nudges), vocabulary lint, CI with automated Phase 1–6 test jobs.
+- Confirmed working: Wrangler config, D1 schema (4 migrations), real `SessionDO` (vote support + logical-clock reconciliation), Guide Engine (segment spec schema + compiler, PACER, EVALUATOR/PROBER), real IndexedDB-backed offline queue, real audio pipeline mechanics (consent, kill switch, R2/D1/Queue), real SYNTHESIZER with provenance verification and artifact versioning, real program layer (org/program/lab_session/initiative/review_cycle CRUD, phase-gated lab sequencing, COACH nudges), real Stripe pricing/webhook-verification and an installable PWA shell (manifest, service worker, real icons — Chrome's own installability check passes with zero real errors), vocabulary lint, CI with automated Phase 1–7 test jobs.
 - Credentials: Jeremy supplied Anthropic, Cloudflare, and Stripe credentials. Anthropic works fully (network-reachable, credits added). **Cloudflare and Stripe are network-blocked from this specific sandbox regardless of credentials** — confirmed via the proxy's own status endpoint, not assumed. See `docs/capability-gaps.md`.
 - **Real finding #1**: Phase 2's gate was measured for real against `claude-sonnet-5` — precision 0.667, genuinely below the 0.8 threshold. Root-caused (EVALUATOR under-classifies vague-but-topical answers as `off_track` instead of `thin`); one prompt-tuning attempt didn't move it. Flagged as a Tier 2 decision for Jeremy rather than kept under autonomous iteration.
 - **Real finding #2**: testing SYNTHESIZER against live Opus surfaced a real data-model bug — two genuinely distinct risks in one synthesis pass would have silently overwritten each other under a "one artifact per kind" assumption. Fixed by splitting kinds into singular (purpose/vision — versioned) vs. plural (risk/driver/etc. — additive).
 - **Phase 6 is the first phase since 0/1/3 whose literal gate is fully satisfied, no proxy or scope reduction** — no physical device, no human judgment, no blocked network needed.
-- In progress: Phase 7, building continuously per Jeremy's instruction.
+- **Phase 7's PWA sub-gate is the second one** — Chrome DevTools Protocol's own `Page.getInstallabilityErrors` call came back with zero real errors, the actual mechanism Chrome/Android use to decide whether to offer install. The commerce sub-gate and the literal iOS/Android device test remain out of this sandbox's reach.
+- All 8 build-plan phases now have a built scaffold. Phase 8 (church-pack curriculum + real pilot) is next and is explicitly out of autonomous scope — needs Jeremy's `docs/source-principles.md` first, per the IP firewall protocol.
 
 **Next Priorities**:
-1. Commerce and PWA (Phase 7): buildable now; live Stripe testing blocked by this sandbox's network policy regardless of the key Jeremy supplied.
-2. Line up two or three willing pilot churches before Phase 8 becomes urgent — the plan calls this out explicitly as a now-task, not a later one.
-3. Jeremy's call: pursue further EVALUATOR prompt tuning, or accept the Phase 2 result pending Phase 8's real curriculum-scale fixture set.
+1. Line up two or three willing pilot churches before Phase 8 becomes urgent — the plan calls this out explicitly as a now-task, not a later one.
+2. Jeremy's call: pursue further EVALUATOR prompt tuning, or accept the Phase 2 result pending Phase 8's real curriculum-scale fixture set.
+3. Before the real pilot: run the literal Phase 1/3/5/7 gates (physical devices, real duration, a real leader's edit count, real iOS/Android installs) and get Phase 4/7's real Whisper/Stripe calls run from an environment that can reach Cloudflare/Stripe.
 
 ---
 
