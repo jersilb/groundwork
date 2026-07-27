@@ -49,11 +49,15 @@ R2 upload endpoint, D1 chunk tracking, Queue-driven transcription dispatch, cons
 **Owner**: executed directly this session.
 **Not yet built**: client-side chunked `MediaRecorder` capture and the recording indicator UI — `frontend-ux-engineer` territory.
 
-## Phase 5 — Synthesis and artifacts
+## Phase 5 — Synthesis and artifacts 🟡 BUILT — gate needs a real human (2026-07-27)
 
-SYNTHESIZER, plan artifact versioning, provenance links, live team editing of drafts, one-page plan generation, PDF export.
+SYNTHESIZER (real Opus), plan artifact versioning, provenance verification, one-page plan assembly.
 **Gate**: a full simulated lab produces a one-page plan requiring fewer than 5 leader edits.
-**Owner**: `synthesis-engineer`.
+**What's actually verified — against real `claude-opus-5`, not a fake client**: real synthesis produces well-sourced draft artifacts; **provenance verification runs against real model output and would reject a fabricated quote** (proven separately with a deterministic fixture test, since real Opus didn't happen to fabricate one in these runs); one-page plan assembly correctly groups multiple artifacts of the same kind (see the real bug below); D1 versioning correctly distinguishes singular kinds (purpose/vision — supersede) from plural kinds (risk/driver/strategy/etc. — additive, never falsely merged).
+**Real bug found and fixed while testing against live Opus**: the model legitimately produced two distinct `risk` artifacts in one synthesis pass (a roof-repair deadline and a leadership-turnover pattern) — genuinely different risks, not two versions of one. The original design assumed one artifact per kind per session; it would have silently overwritten one risk with the other in the one-pager, and the versioning logic would have wrongly marked one as superseding the other. Fixed by splitting kinds into singular (versioned) vs. plural (additive) — logged in `docs/decisions.md`.
+**What's NOT verified — the gate itself**: "fewer than 5 leader edits" is a real human's judgment call on a real draft. No amount of automation substitutes for that — logged in `docs/capability-gaps.md`, same category as the Phase 1 physical-device gate.
+**Not yet built**: live team editing of drafts (frontend), PDF export (needs a rendering decision — likely `frontend-ux-engineer` + a PDF library, out of SYNTHESIZER's scope).
+**Owner**: executed directly this session.
 
 ## Phase 6 — Program layer
 

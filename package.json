@@ -16,7 +16,10 @@
     "test:eval-harness": "node --experimental-strip-types scripts/run-eval-harness.ts",
     "test:pacer": "node --experimental-strip-types scripts/test-pacer.ts",
     "test:evaluator-prober-parsing": "node --experimental-strip-types scripts/test-evaluator-prober-parsing.ts",
-    "test:phase3": "node scripts/test-phase3-resilience.mjs"
+    "test:phase3": "node scripts/test-phase3-resilience.mjs",
+    "test:phase4": "node scripts/test-phase4-audio.mjs",
+    "test:synthesizer-provenance": "node --experimental-strip-types scripts/test-synthesizer-provenance.ts",
+    "test:phase5": "node scripts/test-phase5-synthesis.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

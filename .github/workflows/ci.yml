@@ -94,3 +94,22 @@ jobs:
         run: npx wrangler d1 migrations apply groundwork --local
       - name: Run the audio pipeline test (Workers AI runs remote-only; not exercised here)
         run: node scripts/test-phase4-audio.mjs
+
+  phase5-synthesis:
+    name: Phase 5 gate — SYNTHESIZER provenance verification, artifact versioning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Apply D1 migrations locally
+        run: npx wrangler d1 migrations apply groundwork --local
+      - name: Provenance verification tests (deterministic, no API key needed)
+        run: npm run test:synthesizer-provenance
+      - name: Real end-to-end synthesis test (only if ANTHROPIC_API_KEY is configured as a repo secret)
+        if: env.ANTHROPIC_API_KEY != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npm run test:phase5

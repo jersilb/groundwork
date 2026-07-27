@@ -84,4 +84,14 @@ AI-maintained. Log every task an AI session couldn't complete autonomously. Revi
 
 **Original gap**: The key authenticated but the account had insufficient credit balance to serve requests.
 **Resolution**: Jeremy added credits via the Anthropic Console within the same session. Re-verified with a real API call (HTTP 200, real model response).
-**What this unblocked**: Real Phase 2 gate measurement (see the RESOLVED Anthropic entry above and `docs/decisions.md`). Phase 5 (SYNTHESIZER) is also now real-testable with this key — not yet exercised as of this entry.
+**What this unblocked**: Real Phase 2 gate measurement (see the RESOLVED Anthropic entry above and `docs/decisions.md`). Phase 5 (SYNTHESIZER) was also real-tested with this key against `claude-opus-5` — see `docs/decisions.md`, 2026-07-27 ("Phase 5 built and tested against real Opus").
+
+---
+
+## 2026-07-27 — Phase 5's literal gate needs a real human's judgment
+
+**What I tried to do**: Satisfy the Phase 5 gate literally — "a full simulated lab produces a one-page plan requiring fewer than 5 leader edits."
+**Why I couldn't complete it**: "Fewer than 5 edits" is a real leader's subjective judgment on a real draft plan. There is no principled way to simulate what a specific human would want changed without an actual human — fabricating a "would need N edits" number would be exactly the kind of confident-but-fake measurement the anchors principle exists to prevent.
+**Workaround used**: Built and real-tested the mechanism that produces the draft (SYNTHESIZER, versioning, one-pager assembly) against live Opus. `scripts/test-phase5-synthesis.mjs` prints the real generated content so a human can look at it, but does not and cannot score it against the 5-edit threshold itself.
+**What would fix this**: Run a real simulated lab with Jeremy (or another real leader) reading the actual generated one-pager and counting edits, before this gate is trusted for a live pilot.
+**Impact**: Low for continued building — same category as the Phase 1 physical-device gap (mechanism proven, human-judgment dimension isn't, and doesn't need to block further phases). High before Phase 8's real pilot.
