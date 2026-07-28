@@ -28,7 +28,9 @@ Full definitions and thresholds → `docs/metrics.md`.
 
 | Item | Filed | Urgency | Brief |
 |------|-------|---------|-------|
-| Phase 2 gate genuinely failed (precision 0.667 vs 0.8) — approve further EVALUATOR prompt tuning, or accept as expected pending Phase 8's real curriculum-scale fixture set? | 2026-07-27 | Low — doesn't block continued build | `docs/decisions.md`, 2026-07-27 entry "Real Phase 2 gate measurement" |
+| Phase 2 precision measurement found non-reproducible (0.667/0.750/0.500 across 3 identical runs) — approve setting EVALUATOR temperature to 0 before trusting any further number? | 2026-07-28 | Low — doesn't block continued build | `OUTPUTS/jeremy-review-items-2026-07-28.md` §1.1, `docs/decisions.md` 2026-07-28 |
+| Auth provider still unpicked (Cloudflare Access vs Clerk) — needed before real login/signup screens | 2026-07-26 (open), escalated 2026-07-28 | Medium — blocks frontend auth work | `OUTPUTS/jeremy-review-items-2026-07-28.md` §1.2 |
+| Add Anthropic/Cloudflare/Stripe credentials as GitHub Actions repo secrets so CI can genuinely verify Phases 4 and 7? | 2026-07-28 | Low — doesn't block continued build | `OUTPUTS/jeremy-review-items-2026-07-28.md` §1.3 |
 
 ---
 
@@ -51,6 +53,7 @@ Full definitions and thresholds → `docs/metrics.md`.
 - 2026-07-27: Phase 5 (synthesis) built and tested against real `claude-opus-5`. Found and fixed a real data-model bug live (two distinct risks in one synthesis pass would have wrongly overwritten each other) by splitting artifact kinds into singular/versioned vs. plural/additive. Provenance verification (rejecting fabricated quotes) proven with a deterministic test.
 - 2026-07-27: Phase 6 (program layer) built and its gate **passed for real, no proxy needed** — first phase since 0/1/3. Real org/program/lab_session/initiative/review_cycle CRUD, phase-gated lab sequencing, and COACH (real personalized nudges with a template fallback for Tier 1 autonomy).
 - 2026-07-27: Phase 7 (commerce and PWA) built. PWA sub-gate **passed for real** — Chrome DevTools Protocol's own `Page.getInstallabilityErrors` check came back with zero real errors (manifest, service worker, and generated icons all satisfy Chrome/Android's actual install criteria). Stripe pricing (§9's exact bands) and webhook signature verification (4/4 deterministic tests) built and tested; live checkout/billing-portal calls need `api.stripe.com`, which is network-blocked from this sandbox regardless of the valid key on hand. Literal iOS/Android device install logged as a capability gap, same category as Phase 1's physical-device gap. This closes out all 8 build-plan phases this sandbox can reach — Phase 8 needs Jeremy's curriculum content and a real pilot church.
+- 2026-07-28: Re-ran the Phase 2 eval harness while preparing a consolidated decision-request report and found the precision measurement isn't reproducible (0.667/0.750/0.500 across three identical runs) — root cause is EVALUATOR's Anthropic calls never setting `temperature`, so every call samples at the API default. Filed as a new Tier 2 decision rather than fixed autonomously. Compiled `OUTPUTS/jeremy-review-items-2026-07-28.md` — every open decision and every input only Jeremy can provide, in one report.
 
 ---
 
