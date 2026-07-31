@@ -14,13 +14,12 @@ AI-maintained. Log every task an AI session couldn't complete autonomously. Revi
 
 ---
 
-## 2026-07-26 — Auth provider not yet chosen
+## 2026-07-26 — RESOLVED — Auth provider not yet chosen
 
 **What I tried to do**: N/A — not yet attempted, flagged proactively.
 **Why I couldn't complete it**: The build plan specifies "Cloudflare Access or Clerk — do not roll your own" but doesn't pick one. This is a new external integration (Tier 2) that needs Jeremy's approval before Phase 6/7 work starts.
-**Workaround used**: None needed yet — not on the critical path until Phase 6.
-**What would fix this**: An escalation brief before Phase 6 begins, proposing a recommendation with tradeoffs.
-**Impact**: Low today, will block Phase 6/7 if not resolved beforehand.
+**Resolution**: Jeremy chose Cloudflare Access, 2026-07-31 (see `docs/decisions.md`, `OUTPUTS/jeremy-review-items-2026-07-28.md` §1.2 for the recommendation this decision was based on).
+**Still open**: not yet wired into any code — real login/signup screens are `frontend-ux-engineer` scope, not yet attempted.
 
 ---
 
@@ -105,3 +104,13 @@ AI-maintained. Log every task an AI session couldn't complete autonomously. Revi
 **Workaround used**: `scripts/test-phase7-pwa.mjs` asks Chrome's own DevTools Protocol whether the PWA meets Chrome/Android's real installability criteria — the actual mechanism Chrome uses, not a guess — and gets back zero real errors (see `docs/decisions.md`, 2026-07-27). This proves the manifest, service worker, and icons are correct by the same standard Android Chrome applies. It does not, and cannot, prove anything about the iOS Add-to-Home-Screen experience specifically, since no automatable equivalent exists.
 **What would fix this**: Before the first real pilot (Phase 8), manually install the deployed PWA on one real iOS device and one real Android device and confirm both succeed — cheap to combine with the Phase 1 and Phase 3 physical-device drills already queued for that pre-pilot check.
 **Impact**: Low for continued building (the underlying mechanism is proven correct by the strongest automatable standard available). Required before Phase 8's real pilot, same as the other physical-device gaps.
+
+---
+
+## 2026-07-31 — Phase 4 (Whisper) real verification blocked on a Cloudflare account ID that returns HTTP 401
+
+**What I tried to do**: Now that this session runs on Jeremy's own machine (real network access, unlike the cloud sandbox), verify real Whisper transcription by calling Workers AI directly — `POST /accounts/{account_id}/ai/run/@cf/openai/whisper` — with real synthesized speech audio (macOS `say`, not a stub), bypassing the `env.AI` binding entirely so no billed Cloudflare infra (D1/R2/Queue) needs provisioning first.
+**Why I couldn't complete it**: The Workers-AI-scoped token can't self-report its account via `/accounts` (returns an empty list — expected, given its narrow scope), so the account ID had to come from Jeremy directly. The one supplied (`caf597c33289ef75c8ff13d32436fd68`) returned `HTTP 401 — Authentication error` from the Workers AI endpoint. Either the ID doesn't match the account the token was created under, or there's a typo.
+**Workaround used**: None yet — asked Jeremy to double-check the account ID against the Cloudflare dashboard (Account Overview page, not a specific domain/zone) and confirm the Workers-AI-scoped token was created under that same account.
+**What would fix this**: A correct account ID. Once Workers AI authenticates, this is a single API call away from real transcription evidence — no wrangler remote deploy, no billed resource provisioning needed.
+**Impact**: Medium. This is the one remaining network-dependent gate not yet re-verified since teleporting to a machine that can actually reach Cloudflare's API.

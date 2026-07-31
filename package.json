@@ -22,7 +22,8 @@
     "test:phase5": "node scripts/test-phase5-synthesis.mjs",
     "test:phase6": "node scripts/test-phase6-program.mjs",
     "test:stripe-webhook": "node --experimental-strip-types scripts/test-stripe-webhook-verification.ts",
-    "test:phase7": "node scripts/test-phase7-pwa.mjs"
+    "test:phase7": "node scripts/test-phase7-pwa.mjs",
+    "test:phase7-commerce-live": "node scripts/test-phase7-commerce-live.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

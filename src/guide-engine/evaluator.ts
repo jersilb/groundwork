@@ -65,6 +65,13 @@ export async function runEvaluator(input: EvaluatorInput, llm: LlmClient): Promi
     messages: [{ role: "user", content: buildEvaluatorUserContent(input) }],
     maxTokens: 1024,
     model: MODELS.IN_SESSION,
+    // NOT setting temperature: claude-sonnet-5 rejects the parameter
+    // outright ("temperature is deprecated for this model", HTTP 400).
+    // Jeremy approved a temperature: 0 fix on 2026-07-31 for the
+    // non-determinism found in docs/decisions.md, 2026-07-28; tried it,
+    // found this model doesn't support it, reverted the same day. See
+    // docs/decisions.md, 2026-07-31 for the real finding and the
+    // alternative mitigation (repeated-run measurement) in place of it.
   });
   return parseEvaluatorResponse(response.text, input.segment);
 }

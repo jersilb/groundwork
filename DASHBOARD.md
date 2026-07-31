@@ -1,12 +1,12 @@
 # DASHBOARD — Groundwork
-**Last Updated**: 2026-07-27T06:00:00Z
-**Updated by**: Claude (manual, multi-phase build session)
+**Last Updated**: 2026-07-31T21:30:00Z
+**Updated by**: Claude (session teleported to Jeremy's local machine)
 
 ---
 
 ## Overall Status: 🟡 DEGRADED
 
-Phases 0, 1, 3, 6 gates passed — Phase 6's fully for real, no proxy needed. Phase 2's gate was **measured for real and genuinely failed** (EVALUATOR precision 0.667 vs. the 0.8 threshold) — see Pending Decisions below. Phase 4 built; its gate needs live Cloudflare access this sandbox's network policy blocks outright. Phase 5 built and tested against real Opus; its gate needs a real human's edit-count judgment. Phase 7 built; its PWA sub-gate **passed for real** (Chrome's own installability check, zero real errors) and its commerce sub-gate needs live Stripe access this sandbox's network policy blocks outright, same as Phase 4. No live customer, no revenue, no production infrastructure — nothing to break yet.
+Phases 0, 1, 3, 6 gates passed — Phase 6's fully for real, no proxy needed. **Phase 7's commerce sub-gate now also passes for real** (real Stripe checkout/customer/billing-portal calls from Jeremy's machine, no longer sandbox-blocked) alongside its already-passing PWA sub-gate. Phase 2's gate remains **measured and failed** — precision 0.750 as of the latest real re-measurement, and a temperature-based fix was tried and found impossible on this model (see Pending Decisions). Phase 4 (Whisper) still needs a working Cloudflare account ID before it can be verified for real. Phase 5 built and tested against real Opus; its gate needs a real human's edit-count judgment. No live customer, no revenue, no production infrastructure — nothing to break yet.
 
 ---
 
@@ -15,8 +15,8 @@ Phases 0, 1, 3, 6 gates passed — Phase 6's fully for real, no proxy needed. Ph
 | Metric | Value | Status | Last Checked |
 |--------|-------|--------|--------------|
 | Gates passed | Phase(s) 0, 1, 3, 6 | 🟢 | 2026-07-27T06:00:00Z |
-| Gates measured and FAILED | Phase(s) 2 | 🔴 | 2026-07-27T06:00:00Z |
-| Built, awaiting gate | Phase(s) 4, 5, 7 | 🟡 | 2026-07-27T06:00:00Z |
+| Gates measured and FAILED | Phase(s) 2 | 🔴 | 2026-07-31T21:30:00Z |
+| Built, awaiting gate | Phase(s) 4, 5 | 🟡 | 2026-07-31T21:30:00Z |
 | vocabulary_lint | clean | 🟢 | 2026-07-27T06:00:00Z |
 | monthly_spend_usd | 0 | 🟢 | 2026-07-27T06:00:00Z |
 
@@ -28,9 +28,10 @@ Full definitions and thresholds → `docs/metrics.md`.
 
 | Item | Filed | Urgency | Brief |
 |------|-------|---------|-------|
-| Phase 2 precision measurement found non-reproducible (0.667/0.750/0.500 across 3 identical runs) — approve setting EVALUATOR temperature to 0 before trusting any further number? | 2026-07-28 | Low — doesn't block continued build | `OUTPUTS/jeremy-review-items-2026-07-28.md` §1.1, `docs/decisions.md` 2026-07-28 |
-| Auth provider still unpicked (Cloudflare Access vs Clerk) — needed before real login/signup screens | 2026-07-26 (open), escalated 2026-07-28 | Medium — blocks frontend auth work | `OUTPUTS/jeremy-review-items-2026-07-28.md` §1.2 |
-| Add Anthropic/Cloudflare/Stripe credentials as GitHub Actions repo secrets so CI can genuinely verify Phases 4 and 7? | 2026-07-28 | Low — doesn't block continued build | `OUTPUTS/jeremy-review-items-2026-07-28.md` §1.3 |
+| Phase 2 temperature fix tried and reverted — `claude-sonnet-5` rejects the parameter outright. Approve a repeated-run measurement strategy instead (median/worst of N runs), or accept single-run variance as-is? | 2026-07-31 | Low — doesn't block continued build | `docs/decisions.md`, 2026-07-31 |
+| Phase 4 (Whisper) blocked on Cloudflare account ID — the one supplied (`caf597c...`) returned HTTP 401 on the Workers AI endpoint | 2026-07-31 | Medium — blocks the one remaining unverified network-dependent gate | `docs/decisions.md`, 2026-07-31 |
+
+**Resolved this session**: auth provider → **Cloudflare Access** (Jeremy's call, 2026-07-31). GitHub Actions repo secrets → **declined** (Jeremy's call, 2026-07-31) — credentials stay local-only in `.dev.vars`.
 
 ---
 
@@ -54,14 +55,16 @@ Full definitions and thresholds → `docs/metrics.md`.
 - 2026-07-27: Phase 6 (program layer) built and its gate **passed for real, no proxy needed** — first phase since 0/1/3. Real org/program/lab_session/initiative/review_cycle CRUD, phase-gated lab sequencing, and COACH (real personalized nudges with a template fallback for Tier 1 autonomy).
 - 2026-07-27: Phase 7 (commerce and PWA) built. PWA sub-gate **passed for real** — Chrome DevTools Protocol's own `Page.getInstallabilityErrors` check came back with zero real errors (manifest, service worker, and generated icons all satisfy Chrome/Android's actual install criteria). Stripe pricing (§9's exact bands) and webhook signature verification (4/4 deterministic tests) built and tested; live checkout/billing-portal calls need `api.stripe.com`, which is network-blocked from this sandbox regardless of the valid key on hand. Literal iOS/Android device install logged as a capability gap, same category as Phase 1's physical-device gap. This closes out all 8 build-plan phases this sandbox can reach — Phase 8 needs Jeremy's curriculum content and a real pilot church.
 - 2026-07-28: Re-ran the Phase 2 eval harness while preparing a consolidated decision-request report and found the precision measurement isn't reproducible (0.667/0.750/0.500 across three identical runs) — root cause is EVALUATOR's Anthropic calls never setting `temperature`, so every call samples at the API default. Filed as a new Tier 2 decision rather than fixed autonomously. Compiled `OUTPUTS/jeremy-review-items-2026-07-28.md` — every open decision and every input only Jeremy can provide, in one report.
+- 2026-07-31: Session teleported to Jeremy's local machine (normal network access, unlike the cloud sandbox). Jeremy resolved 3 pending decisions: EVALUATOR temperature fix approved (tried, found `claude-sonnet-5` rejects the parameter outright, reverted same session — real baseline re-measurement: precision 0.750), auth provider set to Cloudflare Access, GitHub Actions secrets declined. **Phase 7's commerce sub-gate now passes for real** — real Stripe checkout session, customer, and billing portal all verified against the live test-mode API from Jeremy's machine. Phase 4 (Whisper) attempted via direct Workers AI REST call with real synthesized audio; blocked on a Cloudflare account ID that returned HTTP 401 — asked Jeremy to double-check it. Kicked off a deep-research pass on the "Groundwork" name/brand (trademark collision, domain availability, existing products) per Jeremy's request.
 
 ---
 
 ## Next 7 Days (Planned)
 
-- Before the first real pilot: run the literal Phase 1 (physical multi-device), Phase 3 (6 clients / 10 minutes), Phase 5 (real leader edit count), and Phase 7 (real iOS/Android install) gates for real, and get Phase 4/7's real Whisper/Stripe tests run from an environment that can reach Cloudflare/Stripe (e.g. GitHub Actions with repo secrets, or Jeremy's own machine).
-- Awaiting Jeremy's call on the Phase 2 gate decision above.
-- Phase 8 (church-pack curriculum + real pilot) is next, and is explicitly gated on Jeremy populating `docs/source-principles.md` — no autonomous action there per the IP firewall protocol.
+- Before the first real pilot: run the literal Phase 1 (physical multi-device), Phase 3 (6 clients / 10 minutes), Phase 5 (real leader edit count), and Phase 7 (real iOS/Android install) gates for real.
+- Get a working Cloudflare account ID from Jeremy to finish Phase 4's real Whisper verification — now feasible from his machine, just blocked on the ID itself.
+- Awaiting Jeremy's call on the Phase 2 repeated-run measurement proposal above.
+- Phase 8 (church-pack curriculum + real pilot) is next, and is explicitly gated on Jeremy populating `docs/source-principles.md` — no autonomous action there per the IP firewall protocol. Jeremy is still waiting on the original source-methodology documents (see `docs/vocabulary.md`) before he can write it.
 
 ---
 
