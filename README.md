@@ -5,7 +5,7 @@
 **Stack**: Cloudflare Workers, Durable Objects, D1, R2, Workers AI (Whisper), React + Vite PWA, Anthropic API, Stripe.
 **Goal**: Walk a faith-based organization's leadership team through four full-day working sessions, purely AI-led, and leave them with a plan they actually run — not a binder that dies on a shelf.
 
-"Groundwork" is a placeholder name pending Jeremy's trademark check (§2.4 of the build plan). Do not treat it as final in marketing or legal contexts.
+"Groundwork" is a placeholder name pending Jeremy's trademark check (§2.4 of the build plan). Do not treat it as final in marketing or legal contexts. **Preliminary research (2026-07-31, `OUTPUTS/groundwork-brand-name-research-2026-07-31.md`) found real collision risk** — the name is already in active use by a firm serving faith-based organizations, a near-identical church small-group app, and several nonprofit-consulting and AI-SaaS companies. Recommendation: get an attorney clearance search and seriously consider alternatives before further brand investment.
 
 ---
 
