@@ -4,13 +4,13 @@ AI-maintained. Log every task an AI session couldn't complete autonomously. Revi
 
 ---
 
-## 2026-07-26 — Live Cloudflare resource provisioning
+## 2026-07-26 — RESOLVED — Live Cloudflare resource provisioning
 
 **What I tried to do**: Satisfy the Phase 0 gate ("wrangler dev runs, migrations apply") using real Cloudflare infrastructure.
 **Why I couldn't complete it**: Creating real D1 databases, R2 buckets, or KV namespaces requires Jeremy's Cloudflare account credentials and is a billed, account-scoped action — not something to do without him present.
 **Workaround used**: Local wrangler emulation (`wrangler dev`, `wrangler d1 migrations apply --local`) satisfies the gate without touching live infrastructure.
-**What would fix this**: Jeremy attaches Cloudflare account access (or runs the provisioning commands himself) when ready to move past local dev — likely at the start of Phase 1 or whenever a shared staging environment is needed.
-**Impact**: Low for now — Phase 0–1 don't need live resources. Will become Medium once multi-device testing (Phase 1 gate: three real devices, no divergence) requires a reachable deployed endpoint rather than local-only `wrangler dev`.
+**Resolution**: Jeremy explicitly asked to set up real hosting (2026-08-01), ran `wrangler login` himself, and this AI provisioned a real D1 database, R2 bucket, and Queue under his account — see `docs/decisions.md`, 2026-08-01. `wrangler.toml` now points at real resource IDs instead of local-dev placeholders.
+**Still open**: `wrangler deploy` itself and the two live secrets (`ANTHROPIC_API_KEY`, `STRIPE_SECRET_KEY`) both got blocked by this session's own safety classifier (real-infrastructure mutation, secret-value piping) — Jeremy is running those directly rather than through this AI.
 
 ---
 
@@ -107,10 +107,9 @@ AI-maintained. Log every task an AI session couldn't complete autonomously. Revi
 
 ---
 
-## 2026-07-31 — Phase 4 (Whisper) real verification blocked on a Cloudflare account ID that returns HTTP 401
+## 2026-07-31 — RESOLVED — Phase 4 (Whisper) real verification blocked on a Cloudflare account ID that returns HTTP 401
 
 **What I tried to do**: Now that this session runs on Jeremy's own machine (real network access, unlike the cloud sandbox), verify real Whisper transcription by calling Workers AI directly — `POST /accounts/{account_id}/ai/run/@cf/openai/whisper` — with real synthesized speech audio (macOS `say`, not a stub), bypassing the `env.AI` binding entirely so no billed Cloudflare infra (D1/R2/Queue) needs provisioning first.
 **Why I couldn't complete it**: The Workers-AI-scoped token can't self-report its account via `/accounts` (returns an empty list — expected, given its narrow scope), so the account ID had to come from Jeremy directly. The one supplied (`caf597c33289ef75c8ff13d32436fd68`) returned `HTTP 401 — Authentication error` from the Workers AI endpoint. Either the ID doesn't match the account the token was created under, or there's a typo.
-**Workaround used**: None yet — asked Jeremy to double-check the account ID against the Cloudflare dashboard (Account Overview page, not a specific domain/zone) and confirm the Workers-AI-scoped token was created under that same account.
-**What would fix this**: A correct account ID. Once Workers AI authenticates, this is a single API call away from real transcription evidence — no wrangler remote deploy, no billed resource provisioning needed.
-**Impact**: Medium. This is the one remaining network-dependent gate not yet re-verified since teleporting to a machine that can actually reach Cloudflare's API.
+**Resolution**: Jeremy ran `wrangler login` (real OAuth, not an API token) on 2026-08-01, which surfaced the correct account ID (`fd5b09ffec9792936392a2fdeddf8590`, "Jersilb@gmail.com's Account") and full account permissions — confirming the earlier ID was simply wrong. Re-ran the same direct Workers AI REST call with the correct ID: **HTTP 200, real transcription in 2.3 seconds**, near-perfect text match against the real spoken input.
+**Outcome**: `docs/roadmap.md` Phase 4 updated with the real transcription evidence. This also resolved the underlying "Live Cloudflare resource provisioning" gap above — `wrangler login`'s OAuth session has full write access, and real D1/R2/Queue resources were provisioned the same session (see `docs/decisions.md`, 2026-08-01).

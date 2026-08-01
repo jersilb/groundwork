@@ -41,12 +41,12 @@ IndexedDB local mirror, submission/vote queue with replay, reconnect reconciliat
 **Not yet built**: the degraded-mode UI (leader continues with pre-generated segment prompts after 5 min offline) and the "cache the next three segments' prompts at all times" requirement — both need Phase 2's segment specs feeding a real frontend, which is `frontend-ux-engineer` + Phase 6 scope.
 **Owner**: executed directly this session.
 
-## Phase 4 — Audio 🟡 BUILT — gate blocked on network access (2026-07-27)
+## Phase 4 — Audio 🟡 BUILT — real transcription now verified, literal duration gate still open (2026-08-01)
 
 R2 upload endpoint, D1 chunk tracking, Queue-driven transcription dispatch, consent gate, kill switch, rolling transcript window helper for EVALUATOR. `wrangler r2 bucket lifecycle` 90-day rule documented as a one-time setup script (needs a real bucket to run against).
 **Gate**: 4 hours of continuous recording with zero lost chunks, transcript lag under 90 seconds.
-**What's actually verified**: `scripts/test-phase4-audio.mjs` — real chunk upload to real local R2, real D1 row creation, real Queue dispatch to a real consumer, consent gating (403 without consent), kill switch (403 once engaged), and — the valuable one — confirmed graceful degradation when the Whisper call fails: the chunk is marked `transcription_error`, not lost, and the pipeline keeps running.
-**What's NOT verified — the gate itself**: real transcription, real latency, the literal 4-hour/zero-lost-chunk duration. Workers AI always calls out to Cloudflare's live inference service — no local emulation exists for it, unlike D1/R2/DO/Queues — and this sandbox's network policy blocks `api.cloudflare.com` entirely, independent of credentials (`docs/capability-gaps.md`, 2026-07-27).
+**What's actually verified**: `scripts/test-phase4-audio.mjs` — real chunk upload to real local R2, real D1 row creation, real Queue dispatch to a real consumer, consent gating (403 without consent), kill switch (403 once engaged), and confirmed graceful degradation when the Whisper call fails: the chunk is marked `transcription_error`, not lost, and the pipeline keeps running. **2026-08-01, once this session had real network access and a correct Cloudflare account ID**: a direct Workers AI REST call (`@cf/openai/whisper`) against real synthesized speech returned `HTTP 200` in 2.3 seconds with a near-perfect transcript — real transcription, not emulated, not assumed.
+**What's NOT verified — the gate itself**: real latency at scale, and the literal 4-hour/zero-lost-chunk continuous-recording duration. One 4-second clip proves the mechanism works end to end; it doesn't prove 4 hours of sustained load.
 **Owner**: executed directly this session.
 **Not yet built**: client-side chunked `MediaRecorder` capture and the recording indicator UI — `frontend-ux-engineer` territory.
 

@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-07-31T21:30:00Z",
+  "updated_at": "2026-08-01T22:10:00Z",
   "overall_status": "yellow",
   "gates_passed": [
     0,
@@ -20,13 +20,25 @@
       "value": "clean",
       "unit": "status",
       "status": "green",
-      "checked_at": "2026-07-31T21:30:00Z"
+      "checked_at": "2026-08-01T22:10:00Z"
     },
     "monthly_spend_usd": {
       "value": 0,
       "unit": "$",
       "status": "green",
       "checked_at": "2026-07-27T06:00:00Z"
+    },
+    "live_infrastructure_provisioned": {
+      "value": true,
+      "unit": "status",
+      "status": "yellow",
+      "checked_at": "2026-08-01T22:10:00Z"
+    },
+    "worker_deployed": {
+      "value": false,
+      "unit": "status",
+      "status": "yellow",
+      "checked_at": "2026-08-01T22:10:00Z"
     }
   },
   "active_alerts": [],
