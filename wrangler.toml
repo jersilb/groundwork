@@ -7,6 +7,13 @@
 name = "groundwork"
 main = "src/index.ts"
 compatibility_date = "2024-11-01"
+# nodejs_compat: the Anthropic SDK's bundle imports node:fs/node:path
+# (credential-chain code, unused when constructing the client with an
+# explicit apiKey, but esbuild still includes it). Without this flag,
+# wrangler warns the Worker "may throw errors at runtime" — found via
+# `wrangler deploy --dry-run` on 2026-08-02, fixed before it could bite
+# in production rather than after.
+compatibility_flags = ["nodejs_compat"]
 account_id = "fd5b09ffec9792936392a2fdeddf8590"
 
 [[durable_objects.bindings]]
