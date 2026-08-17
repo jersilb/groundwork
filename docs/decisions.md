@@ -234,3 +234,49 @@ Append-only. Every non-trivial decision — autonomous or escalated — gets a d
 **Also discovered**: local dev's D1 emulation is keyed to the configured `database_id`, not just the database name — pointing `wrangler.toml` at the real remote database ID (done 2026-08-01) meant local dev's persisted state was a fresh, unmigrated local copy. Not a bug, just an implication of the ID change; fixed by re-running `wrangler d1 migrations apply groundwork --local`.
 **Still needed**: Jeremy needs to redeploy once more (`wrangler deploy`) to push the `nodejs_compat` fix live — this AI's attempt is blocked by the same safety classifier as before.
 **Outcome**: real deployment confirmed live and working. One real production-readiness bug caught and fixed before Jeremy needed to hit it via a runtime error.
+---
+
+## 2026-08-16 — Session reconnect/replay hardened, §5.5 leader-override server contract added, real lab_session rooms wired
+
+**Context**: Three integration tasks on the session spine: (1) audit and fix reconnect/replay end to end — a rejoining client gets full state, replayed offline input can't clobber newer data, and the DO survives eviction via its D1 checkpoint; (2) add the "Leader override is absolute" (§5.5) server contract — `backtrack_segment` and `leader_override`, both screen-role-only; (3) wire real `lab_session` rows into the room mechanism (`POST /lab-session/:id/open`).
+
+**Verified, no change needed (1)**: the join handler already sends the complete current state on every WebSocket upgrade (rejoin/reconnect is safe as-is); submission dedup by `clientUuid` and vote reconciliation by `logicalClock` were already correct in `SessionDO` — all three confirmed with live tests.
+
+**Gap found and fixed (1)**: the D1 checkpoint (alarm every 30s + at segment boundaries, built in Phase 1) was write-only — nothing ever restored from it. Durable storage survives normal eviction, but if an instance's storage is lost, the checkpoint was the only copy and it was never read. Added `restoreFromCheckpoint()` to the DO constructor (recovery hierarchy: durable storage → D1 checkpoint → fresh initialState), with alarm re-arm on restore and a guard for checkpoints written before the new `submissions` field existed.
+
+**Client mirror (1)**: `SessionState` gained a `submissions` map (segmentKey → clientUuid → {content}) — the DO previously counted submissions but dropped the content, which made content replacement impossible and left the shared screen without content to render. Wired the previously-dead durable IndexedDB outbox (`web/src/lib/offline.ts`) into `SessionSocket` as an opt-in `durableOutbox` option (enabled on the phone client): submit/vote messages are persisted before send, replayed on reconnect, and removed only on server-state confirmation (same discipline as the Phase 3 resilience prototype). `advance_segment`/`backtrack_segment`/`leader_override` stay in the in-memory outbox only — they are not idempotent and must not be replayed after a reload.
+
+**Design decisions (2)**: `leader_override` is a discriminated union over two kinds — submission (segmentKey + clientUuid + newContent, replaces the stored content) and vote (segmentKey + voterUuid + optionId, forces the option) — both gated to the screen role like `advance_segment`. Vote override deliberately keeps the voter's existing `logicalClock`: the clock check then rejects any stale replay (clock ≤ stored) while the voter's next genuine vote (strictly higher clock) still lands — "absolute" without breaking the clock discipline or needing client-side clock sync. Overriding a nonexistent entry/vote is rejected with an error. `backtrack_segment` decrements `currentSegmentIndex` (clamped at 0), screen-only, and checkpoints to D1 as a segment boundary.
+
+**Design decisions (3)**: real-lab session keys are derived deterministically (`lab-<labSessionId>`) so the key→session mapping needs no extra storage and reopening is idempotent. `POST /lab-session/:id/open` validates existence (404), rejects completed labs (409 — a finished lab cannot be reopened, same phase-gate spirit as scheduling), marks the lab `started`, and creates the opening `segment_run` row (segment_key from the shared fake-lab definition, now exported from `src/session-protocol.ts`) so live session activity has a real FK target. The connect route already accepted these keys — no routing change needed.
+
+**Verification**: new `scripts/test-session-integration.mjs` (`npm run test:session-integration`, port 8793, isolated `--persist-to` state dir so it never races other wrangler instances) — rejoin receives full state; replayed duplicate submission stays deduped; vote replays at stale/equal clocks ignored and newer applied; phone-initiated backtrack/override rejected; screen backtrack/override applied and broadcast; DO instance killed, its storage deleted (simulated eviction + total storage loss), restarted, and full state restored from the D1 checkpoint (index, overridden submission content, and vote all intact); full org→program→lab→open→connect flow with idempotent reopen, 404/409 paths, and `segment_run` + checkpoint rows verified via `wrangler d1 execute`. Wired into CI as the `session-integration` job. All gates green: typecheck (worker + web), vocabulary lint, `test:phase1`, `test:phase3`, `test:phase6`, `test:session-integration`.
+
+**Flagged for review**: `PhoneClient.submit()` reuses the stable `clientId` as the submission `clientUuid`, so a second submission from the same phone in the same segment is deduped server-side — a pre-existing skeleton bug (frontend UX agent territory, per `CLAUDE.md`), surfaced but not changed here.
+
+---
+
+## 2026-08-16 — Production-ready MVP frontend built, full-stack integration verified, deployed
+
+**Context**: Jeremy left this AI in charge with a directive to finish a production-ready MVP: "You lead and direct them. Unblock them when they get stuck. I will be leaving for a while and I need you to keep working unto the goal of completion." A six-agent team (director + 5 specialists) built the product's frontend and wired the whole stack together.
+
+**What was built (frontend, web/ — the entire client was previously a 19-line installability shell)**:
+- Vite 8 + React 19 + TypeScript + Tailwind v4 app in web/ (build → dist/, served by the Worker via an [assets] binding with SPA fallback — deep links like /org/:id preserve their path).
+- Design system in web/src/theme.css ("the planning room": warm paper, deep navy, one amber accent, Fraunces display serif + Sora body) — everything follows it; no generic AI styling.
+- Shared-screen room experience (web/src/features/room/screen/*): live segment runner, vote results, submission counts, recording consent + kill switch, leader controls, degraded-mode banner.
+- Phone client (web/src/features/room/phone/*): prompt hero, submit + vote, durable IndexedDB outbox with state-confirmed delivery, offline-first send.
+- Org side (web/src/features/org/*): setup flow, dashboard, lab schedule with real "Start live lab" (POST /lab-session/:id/open → /session/lab-<id>), initiatives + overdue steps, COACH nudges, review cycles + health snapshot.
+- Billing (real tiers from src/commerce/pricing.ts, value-based trial messaging, custom-quote band), PWA install prompt + /install help, polished landing.
+- Production-grade service worker (precache via postbuild cache-manifest, stale-while-revalidate runtime cache, network-first API GETs, offline SPA shell) — the PWA test passes with zero real Chrome installability errors.
+
+**Real bugs caught and fixed by the director (all found by the new smoke test, scripts/smoke-web.mjs, which loads every route in real Chromium against a live wrangler dev):**
+1. `useSyncExternalStore` snapshot identity bug in web/src/lib/session-store.ts — a fresh object per getSnapshot() call caused React error #185 (infinite re-render). Fixed with module-level per-socket snapshot caching.
+2. The SessionDO requires `role` + `clientId` as WebSocket UPGRADE query params, but the client connected without them — the room could never connect (400). Fixed in web/src/lib/ws.ts.
+3. An ambient `VITE_API_BASE_URL=http://localhost:3001/api` from another project was being baked into production bundles, sending every API call to a dead port. Fixed by hard-coding same-origin in web/src/lib/api.ts (and open-lab.ts) — the vite dev proxy already covers local dev.
+
+**Design decision — one submission per participant per segment is by design**: submissions carry no logical clock, so a replayed offline entry must never overwrite a newer response; the server fully ignores duplicate clientUuids (count AND content). The phone UI gates the composer after the first send; leader override (§5.5) is the edit path. This resolves the flagged PhoneClient.submit() concern as a documented behavior, not a bug to fix.
+
+**Verification**: full suite green — typecheck (worker + web), vocabulary lint (+ self-test), segment-spec compile, PACER, EVALUATOR/PROBER parsing, eval-harness self-test, synthesizer provenance, Stripe webhook crypto, Phase 1 (3-client convergence), Phase 3 (real Chromium offline/replay), Phase 4 (audio pipeline), Phase 6 (program layer with a real personalized COACH nudge via the live Anthropic key in .dev.vars), session-integration (reconnect/replay, leader override, lab wiring, eviction recovery), PWA installability (zero real Chrome errors), and smoke-web (6/6 routes, zero console errors, zero failed requests).
+
+**Outcome**: this AI deployed the new Worker to Jeremy's account (replacing the 2026-08-02 build, which had no frontend) and verified it live — /health, the SPA shell, and a real WebSocket session on the deployed URL. The live secrets set on 2026-08-02 persist. Remaining human work is unchanged in nature: real-device gate days, pilot churches, Phase 8 curriculum, trademark, and Stripe webhook endpoint configuration (needs the Stripe dashboard).
+

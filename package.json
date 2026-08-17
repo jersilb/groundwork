@@ -7,7 +7,10 @@
   "scripts": {
     "dev": "wrangler dev",
     "dev:local": "wrangler dev --local",
-    "typecheck": "tsc --noEmit",
+    "dev:web": "vite web",
+    "build:web": "NODE_ENV=production vite build web",
+    "postbuild:web": "node scripts/generate-cache-manifest.mjs",
+    "typecheck": "tsc --noEmit && tsc -p web/tsconfig.json --noEmit",
     "migrate:local": "wrangler d1 migrations apply groundwork --local",
     "lint:vocab": "node scripts/lint-vocabulary.mjs",
     "lint:vocab:selftest": "node scripts/lint-vocabulary.mjs --self-test",
@@ -21,19 +24,33 @@
     "test:synthesizer-provenance": "node --experimental-strip-types scripts/test-synthesizer-provenance.ts",
     "test:phase5": "node scripts/test-phase5-synthesis.mjs",
     "test:phase6": "node scripts/test-phase6-program.mjs",
+    "test:session-integration": "node scripts/test-session-integration.mjs",
     "test:stripe-webhook": "node --experimental-strip-types scripts/test-stripe-webhook-verification.ts",
     "test:phase7": "node scripts/test-phase7-pwa.mjs",
     "test:phase7-commerce-live": "node scripts/test-phase7-commerce-live.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
+    "lucide-react": "^1.31.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2",
     "stripe": "^22.0.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.0.0",
+    "@fontsource/fraunces": "^5.3.0",
+    "@fontsource/sora": "^5.3.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
     "playwright": "^1.0.0",
+    "tailwindcss": "^4.3.3",
     "typescript": "^7.0.0",
+    "vite": "^8.2.1",
     "wrangler": "^4.0.0",
     "yaml": "^2.0.0"
   }

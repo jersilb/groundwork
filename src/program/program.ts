@@ -1,4 +1,5 @@
 import type { Env } from "../index.ts";
+import { FAKE_LAB_SEGMENTS } from "../session-protocol.ts";
 
 // Program and lab sequencing — build plan §6/§7 Phase 6. Phase-gated:
 // completing one lab unlocks the next, matching "Phase-gated workflow
@@ -89,6 +90,46 @@ export async function completeLabSession(env: Env, labSessionId: string): Promis
       .bind(session.lab_number, newStatus, session.program_id)
       .run();
   }
+}
+
+export interface OpenLabSessionResult {
+  sessionKey: string;
+  connectPath: string;
+}
+
+/**
+ * Open a real lab_session as a live room. The session key is derived
+ * deterministically from the lab_session id ("lab-<id>") so reopening is
+ * idempotent and the key→session mapping needs no extra storage. Records
+ * the open on the lab_session row (status → 'started', started_at) and
+ * creates the opening segment_run row so live session activity has a real
+ * FK target (submission/vote rows). Returns null when the lab_session
+ * doesn't exist; throws LabSequenceError when it's already completed (a
+ * finished lab cannot be reopened — same phase-gate spirit as scheduling).
+ */
+export async function openLabSession(env: Env, labSessionId: string): Promise<OpenLabSessionResult | null> {
+  const session = await env.DB.prepare(`SELECT id, status FROM lab_session WHERE id = ?1`)
+    .bind(labSessionId)
+    .first<{ id: string; status: string }>();
+  if (!session) return null;
+  if (session.status === "completed") {
+    throw new LabSequenceError(`lab_session ${labSessionId} is completed and cannot be reopened`);
+  }
+
+  const sessionKey = `lab-${session.id}`;
+  if (session.status !== "started") {
+    const now = new Date().toISOString();
+    await env.DB.prepare(`UPDATE lab_session SET status = 'started', started_at = ?1 WHERE id = ?2`)
+      .bind(now, labSessionId)
+      .run();
+    const firstSegment = FAKE_LAB_SEGMENTS[0];
+    await env.DB.prepare(
+      `INSERT INTO segment_run (id, session_id, segment_key, started_at, planned_duration_min) VALUES (?1, ?2, ?3, ?4, ?5)`,
+    )
+      .bind(crypto.randomUUID(), labSessionId, firstSegment.key, now, firstSegment.plannedMinutes)
+      .run();
+  }
+  return { sessionKey, connectPath: `/session/${sessionKey}/connect` };
 }
 
 export async function recordConsent(env: Env, labSessionId: string, consentedBy: string): Promise<void> {

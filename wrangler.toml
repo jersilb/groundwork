@@ -50,3 +50,14 @@ max_batch_timeout = 5
 # api.cloudflare.com at all, so this binding is untestable here regardless).
 [ai]
 binding = "AI"
+
+# Frontend PWA: built by `npm run build:web` (vite) into dist/, served by
+# the Worker through this binding. The worker routes API + WebSocket paths
+# first, then falls back to static assets with a single-page-app fallback
+# to index.html for client-side routes. See src/index.ts.
+[assets]
+directory = "dist"
+binding = "ASSETS"
+# SPA: unknown extension-less paths serve index.html with the URL preserved
+# (deep links like /org/:id must land on the client route, not redirect to /).
+not_found_handling = "single-page-application"

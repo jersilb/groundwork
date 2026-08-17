@@ -1,6 +1,6 @@
 import type { Env } from "../index.ts";
 import { createOrg, createUser, type CreateOrgBody, type CreateUserBody } from "./org.ts";
-import { createProgram, scheduleLabSession, completeLabSession, recordConsent, getProgramState, LabSequenceError } from "./program.ts";
+import { createProgram, scheduleLabSession, completeLabSession, recordConsent, getProgramState, openLabSession, LabSequenceError } from "./program.ts";
 import { createInitiative, addInitiativeStep, getOverdueSteps, type CreateInitiativeBody } from "./initiatives.ts";
 import { generateNudge, fallbackNudge } from "./coach.ts";
 import { AnthropicLlmClient } from "../guide-engine/llm-client.ts";
@@ -56,6 +56,18 @@ async function route(request: Request, env: Env, url: URL): Promise<Response | n
   if (m && method === "POST") {
     await completeLabSession(env, m[1]);
     return Response.json({ status: "ok" });
+  }
+
+  m = p.match(/^\/lab-session\/([A-Za-z0-9_-]+)\/open$/);
+  if (m && method === "POST") {
+    try {
+      const opened = await openLabSession(env, m[1]);
+      if (!opened) return Response.json({ error: "not found" }, { status: 404 });
+      return Response.json(opened, { status: 201 });
+    } catch (err) {
+      if (err instanceof LabSequenceError) return Response.json({ error: err.message }, { status: 409 });
+      throw err;
+    }
   }
 
   m = p.match(/^\/lab-session\/([A-Za-z0-9_-]+)\/consent$/);

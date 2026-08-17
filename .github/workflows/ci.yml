@@ -28,10 +28,12 @@ jobs:
         with:
           node-version: 22
       - run: npm install
-      - name: Typecheck
+      - name: Typecheck (worker + web)
         run: npm run typecheck
-      - name: Validate wrangler config
-        run: npx wrangler deploy --dry-run --outdir dist
+      - name: Build the frontend PWA
+        run: npm run build:web
+      - name: Validate wrangler config (dry-run, separate outdir so it never mixes with the vite dist)
+        run: npx wrangler deploy --dry-run --outdir .wrangler-dryrun
       - name: Apply D1 migration locally
         run: npx wrangler d1 migrations apply groundwork --local
 
@@ -48,6 +50,20 @@ jobs:
         run: npx wrangler d1 migrations apply groundwork --local
       - name: Run the automated multi-client convergence test
         run: node scripts/test-phase1-multiclient.mjs
+
+  session-integration:
+    name: Session integration — reconnect/replay, leader override, lab wiring
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Apply D1 migrations locally
+        run: npx wrangler d1 migrations apply groundwork --local
+      - name: Run the reconnect/replay + leader + lab-wiring test
+        run: node scripts/test-session-integration.mjs
 
   phase2-guide-engine:
     name: Phase 2 gate — PACER/EVALUATOR/PROBER + segment spec compiler
@@ -141,5 +157,7 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Stripe webhook signature verification (pure crypto, no network/key needed)
         run: npm run test:stripe-webhook
+      - name: Build the frontend PWA (the installability check serves dist/)
+        run: npm run build:web
       - name: PWA installability check via Chrome DevTools Protocol (manifest, service worker, icons)
         run: npm run test:phase7

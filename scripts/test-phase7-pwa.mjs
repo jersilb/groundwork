@@ -23,13 +23,21 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const SANDBOX_CHROME_PATH = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
 const CHROME_PATH = existsSync(SANDBOX_CHROME_PATH) ? SANDBOX_CHROME_PATH : undefined;
 
+// The PWA now serves the built frontend (dist/), not the old installability
+// shell. CI runs `npm run build:web` before this job; locally, build first.
+const STATIC_DIR = path.join(REPO_ROOT, "dist");
+if (!existsSync(STATIC_DIR)) {
+  console.error("dist/ not found - run `npm run build:web` before the PWA test");
+  process.exit(1);
+}
+
 const CONTENT_TYPES = { ".html": "text/html", ".json": "application/manifest+json", ".js": "text/javascript", ".png": "image/png" };
 
 function startStaticServer() {
   const server = createServer(async (req, res) => {
     const filePath = req.url === "/" ? "/index.html" : req.url;
     try {
-      const body = await readFile(path.join(REPO_ROOT, "public", filePath));
+      const body = await readFile(path.join(STATIC_DIR, filePath));
       const ext = path.extname(filePath);
       res.writeHead(200, { "content-type": CONTENT_TYPES[ext] ?? "application/octet-stream" });
       res.end(body);

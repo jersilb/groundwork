@@ -9,6 +9,18 @@ export interface SegmentDef {
   plannedMinutes: number;
 }
 
+/** The hardcoded three-segment fake lab used through Phase 1-5 testing
+ * (build plan §7 Phase 1: "Segment advance, hardcoded three-segment fake
+ * lab. No AI yet."). Real segment specs load from content/packs/ starting
+ * Phase 2 — see guide-engine-architect. Lives here so the SessionDO and
+ * the program layer (lab_session open → opening segment_run) share one
+ * definition. */
+export const FAKE_LAB_SEGMENTS: SegmentDef[] = [
+  { key: "welcome", title: "Welcome", plannedMinutes: 2 },
+  { key: "warmup", title: "Warm-up question", plannedMinutes: 3 },
+  { key: "wrapup", title: "Wrap-up", plannedMinutes: 2 },
+];
+
 /** A single voter's current vote for a segment. `logicalClock` is a
  * client-incrementing counter, not wall-clock time — build plan §3.3:
  * "last-write-wins is wrong here; use per-field vector timestamps." A
@@ -20,6 +32,13 @@ export interface VoteRecord {
   logicalClock: number;
 }
 
+/** One participant submission as tracked by the server. Content is stored
+ * (not just counted) so the shared screen can display it and so
+ * leader_override can replace it — §5.5 "Leader override is absolute." */
+export interface SubmissionRecord {
+  content: string;
+}
+
 export interface SessionState {
   sessionId: string;
   stateVersion: number;
@@ -27,16 +46,34 @@ export interface SessionState {
   segments: SegmentDef[];
   submissionCounts: Record<string, number>;
   submittedClientUuids: Record<string, string[]>;
+  /** segmentKey -> clientUuid -> submission. Mirrors submittedClientUuids
+   * (same key set); kept as its own map so a leader override can rewrite
+   * content without touching the dedup index. */
+  submissions: Record<string, Record<string, SubmissionRecord>>;
   votes: Record<string, Record<string, VoteRecord>>; // segmentKey -> voterUuid -> vote
   startedAt: string;
 }
 
+/** Leader-only mutation payloads (screen role). §5.5: "Leader override is
+ * absolute" — the human in the room can always rewrite a submitted entry
+ * or force a vote. This is the server-side contract the UI calls; no
+ * conflict-resolution UI is built here. */
+export type LeaderOverride =
+  | { kind: "submission"; segmentKey: string; clientUuid: string; newContent: string }
+  | { kind: "vote"; segmentKey: string; voterUuid: string; optionId: string };
+
 export type ClientToServerMessage =
   | { type: "join"; role: ClientRole; clientId: string }
   | { type: "advance_segment" }
+  | { type: "backtrack_segment" }
   | { type: "submit"; segmentKey: string; clientUuid: string; content: string }
-  | { type: "vote"; segmentKey: string; voterUuid: string; optionId: string; logicalClock: number };
+  | { type: "vote"; segmentKey: string; voterUuid: string; optionId: string; logicalClock: number }
+  | { type: "leader_override"; override: LeaderOverride };
 
+// Every server response is either a full `state` broadcast — all mutations
+// fan out the complete SessionState, so a rejoining client receives
+// everything it missed and needs no separate resync message — or an
+// `error`. No other server message types exist.
 export type ServerToClientMessage =
   | { type: "state"; state: SessionState }
   | { type: "error"; message: string };

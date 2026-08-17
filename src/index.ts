@@ -21,6 +21,9 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
+  /** Built frontend (dist/ via the [assets] binding) — served on GETs
+   * that no API/WebSocket route matched, with an SPA fallback. */
+  ASSETS?: Fetcher;
 }
 
 const SESSION_CONNECT_PATH = /^\/session\/([A-Za-z0-9_-]+)\/connect$/;
@@ -30,10 +33,11 @@ const SESSION_CONNECT_PATH = /^\/session\/([A-Za-z0-9_-]+)\/connect$/;
  * for a given session key (one DO per session, per build plan §3.2), and
  * HTTP routes for the Phase 4 audio pipeline and Phase 5 synthesis.
  *
- * `sessionKey` here is a simple path segment for the hardcoded fake lab
- * used through Phase 1-5 testing. The full `session:{orgId}:{labId}:
- * {sessionId}` naming scheme and human-typeable join codes land in Phase 6
- * when the program layer exists.
+ * `sessionKey` is the join code used by /session/:key/connect. The
+ * hardcoded fake lab used through Phase 1-5 testing accepts any unique key
+ * (tests use timestamped keys); real lab_sessions open rooms with the
+ * deterministic key "lab-<labSessionId>" via POST /lab-session/:id/open
+ * (src/program/program.ts). The connect regex accepts both.
  */
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -61,6 +65,23 @@ export default {
       const id = env.SESSION_DO.idFromName(sessionKey);
       const stub = env.SESSION_DO.get(id);
       return stub.fetch(request);
+    }
+
+    // Static frontend: serve the built PWA for GETs, with a single-page
+    // fallback to index.html for client-side routes (no file extension).
+    // The assets service answers missing paths with 404 or a 307 trailing-
+    // slash redirect; both mean "no such file" for a path with no extension.
+    if (request.method === "GET" && env.ASSETS) {
+      const assetResponse = await env.ASSETS.fetch(request);
+      const notFoundish =
+        assetResponse.status === 404 ||
+        assetResponse.status === 307 ||
+        assetResponse.status === 308;
+      if (notFoundish && !/\.[a-zA-Z0-9]+$/.test(url.pathname)) {
+        const indexUrl = new URL("/index.html", request.url);
+        return env.ASSETS.fetch(new Request(indexUrl, request));
+      }
+      return assetResponse;
     }
 
     return new Response("Not found", { status: 404 });
