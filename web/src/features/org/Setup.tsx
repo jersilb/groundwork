@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Landmark, ArrowRight, Sparkles } from "lucide-react";
-import { api, type CreateOrgBody } from "../../lib/api";
+import { api } from "../../lib/api";
 import { ErrorBanner } from "./bits";
 
 export interface SetupResult {
@@ -53,7 +53,7 @@ export default function Setup({ orgId, onComplete }: SetupProps) {
   async function createOrgAndProgram(name: string, type: OrgType, leader: string): Promise<SetupResult> {
     // The endpoint requires an organization type even though the typed
     // client body only declares `name` — send the full shape it expects.
-    const org = await api.createOrg({ name, type } as CreateOrgBody);
+    const org = await api.createOrg({ name, type });
 
     let leaderUserId: string | undefined;
     if (leader.trim()) {

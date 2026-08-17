@@ -284,3 +284,7 @@ Append-only. Every non-trivial decision — autonomous or escalated — gets a d
 
 **Known limitation, logged for Phase 8**: vote options exist only inside `SessionState.votes` (populated by cast votes), so the first voter sees no options — the fake lab's segments define no options, and the vote UI stays dormant until real curriculum (Phase 8) adds an options source (e.g. a `voteOptions` field on SegmentDef or per-segment spec data). Not a bug in the current protocol; a curriculum-scale design item.
 
+**Dashboard contract fixes (2026-08-16, from the org-dashboard agent's report)**: (1) `CreateOrgBody` in web/src/lib/api.ts now carries the required `type` union (Setup.tsx's cast removed — the server column is NOT NULL); (2) initiative creation now sends `whyNow` (the server column) instead of `description`, which the server was silently dropping — the client body type was realigned to the server contract. Both verified by typecheck + build + the 7/7 smoke run, committed and redeployed.
+
+**Known MVP limitation, logged for follow-up**: the org dashboard's lab schedule, initiatives, and review cycles hydrate from localStorage (keyed by org/program) because the API has no list endpoints — the server holds write truth (program phase-gating, consent, completion) but a second device won't see another device's local-only entries. A follow-up should add GET /program/:id/lab-sessions, /initiatives (with steps), /review-cycles and hydrate from server truth with localStorage as offline fallback.
+

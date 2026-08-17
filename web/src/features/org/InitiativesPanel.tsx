@@ -65,8 +65,9 @@ export default function InitiativesPanel({ programId }: InitiativesPanelProps) {
     setBusy("create-initiative");
     setError(null);
     try {
-      const { id } = await api.createInitiative(programId, { title, description: newDesc.trim() || undefined });
-      const next = [...initiatives, { id, title, description: newDesc.trim() || undefined, steps: [] }];
+      const whyNow = newDesc.trim() || undefined;
+      const { id } = await api.createInitiative(programId, { title, whyNow });
+      const next = [...initiatives, { id, title, whyNow, steps: [] }];
       setInitiatives(next);
       setNewTitle("");
       setNewDesc("");

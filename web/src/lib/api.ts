@@ -43,9 +43,17 @@ export class ApiError extends Error {
 
 /* ---------- Program / org layer ---------- */
 
-export interface CreateOrgBody { name: string; }
+export type OrgType = "church" | "parachurch" | "nonprofit" | "school";
+
+export interface CreateOrgBody { name: string; type: OrgType; annualBudgetBand?: string; }
 export interface CreateUserBody { name: string; email: string; role: "leader" | "member"; }
-export interface CreateInitiativeBody { title: string; description?: string; }
+export interface CreateInitiativeBody {
+  title: string;
+  /** The server column is why_now — "why this initiative, now". */
+  whyNow?: string;
+  ownerUserId?: string;
+  dueDate?: string;
+}
 
 export const api = {
   health: () => request<{ status: string }>("/health"),
