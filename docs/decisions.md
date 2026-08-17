@@ -280,3 +280,7 @@ Append-only. Every non-trivial decision — autonomous or escalated — gets a d
 
 **Outcome**: this AI deployed the new Worker to Jeremy's account (replacing the 2026-08-02 build, which had no frontend) and verified it live — /health, the SPA shell, and a real WebSocket session on the deployed URL. The live secrets set on 2026-08-02 persist. Remaining human work is unchanged in nature: real-device gate days, pilot churches, Phase 8 curriculum, trademark, and Stripe webhook endpoint configuration (needs the Stripe dashboard).
 
+**Follow-ups closed 2026-08-16 (late agent reports)**: the phone agent's cross-session outbox caveat was already resolved during integration — `QueuedEntry.sessionKey` + session-scoped `useOutbox` + `SessionSocket.sessionKey` mean queued input only drains into its own session's socket. The install prompt was additionally mounted on the org dashboard and `/install` added to the smoke routes (7/7), then redeployed (version fcd4d84b).
+
+**Known limitation, logged for Phase 8**: vote options exist only inside `SessionState.votes` (populated by cast votes), so the first voter sees no options — the fake lab's segments define no options, and the vote UI stays dormant until real curriculum (Phase 8) adds an options source (e.g. a `voteOptions` field on SegmentDef or per-segment spec data). Not a bug in the current protocol; a curriculum-scale design item.
+
