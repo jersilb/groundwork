@@ -7,6 +7,7 @@ import { LABS } from "./types";
 import { programStore } from "./program-store";
 import { prettifySlug, StatusChip, WarnBanner } from "./bits";
 import { openLiveLab } from "./open-lab";
+import InstallPrompt from "../install/InstallPrompt";
 import Setup, { type SetupResult } from "./Setup";
 import LabSchedule from "./LabSchedule";
 import InitiativesPanel from "./InitiativesPanel";
@@ -147,6 +148,7 @@ function OrgDashboard({ orgId }: { orgId: string }) {
 
   return (
     <div className="min-h-screen">
+      <InstallPrompt />
       <header className="ledger-rule sticky top-0 z-10 bg-paper/95 px-6 py-4 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">

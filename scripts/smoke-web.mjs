@@ -64,6 +64,7 @@ async function main() {
       { path: "/session/demo", expect: "Welcome" },
       { path: "/org/demo", expect: "your program" },
       { path: "/org/demo/billing", expect: "Your plan" },
+      { path: "/install", expect: "Install Groundwork on your phone" },
     ];
 
     for (const route of routes) {
