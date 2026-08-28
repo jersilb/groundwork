@@ -4,6 +4,7 @@ import { transcribeAudioChunk } from "./audio/transcribe.ts";
 import { handleSynthesisRoute } from "./synthesis/routes.ts";
 import { handleProgramRoute } from "./program/routes.ts";
 import { handleCommerceRoute } from "./commerce/routes.ts";
+import { authenticateRequest } from "./auth/cloudflare-access.ts";
 
 export { SessionDO } from "./session-do.ts";
 
@@ -21,6 +22,18 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
+  /** Cloudflare Access team domain, e.g. "your-team". When set, all
+   * state-changing routes require a valid CF-Access-Jwt-Assertion header. */
+  CF_ACCESS_TEAM_DOMAIN?: string;
+  /** Cloudflare Access application AUD tag. When set, Access JWTs must
+   * carry this audience — without it, any token signed by the team's certs
+   * from ANY Access application in the team is accepted. */
+  CF_ACCESS_AUD?: string;
+  /** Master switch for the in-session Guide Engine (PACER/EVALUATOR/
+   * PROBER/SYNTHESIZER). "false" disables it even when ANTHROPIC_API_KEY
+   * exists — local tests set this in .dev.vars so no suite depends on a
+   * live LLM. Production sets GUIDE_ENABLED="true" via [vars]. */
+  GUIDE_ENABLED?: string;
   /** Built frontend (dist/ via the [assets] binding) — served on GETs
    * that no API/WebSocket route matched, with an SPA fallback. */
   ASSETS?: Fetcher;
@@ -45,6 +58,27 @@ export default {
 
     if (url.pathname === "/health") {
       return Response.json({ status: "ok", phase: 7 });
+    }
+
+    // Authenticate all non-GET, non-OPTIONS API requests before routing.
+    // GETs for session state / plan display and static assets remain open.
+    // The WebSocket upgrade is handled below; the shared screen must pass
+    // the screen token minted by POST /lab-session/:id/open as a query
+    // parameter to perform leader actions.
+    //
+    // /webhooks/* is exempt: Stripe's servers cannot present a CF Access
+    // JWT, and webhook requests authenticate themselves via their HMAC
+    // signature (verified in handleCommerceRoute). This exemption is the
+    // fix for the webhook being 401-dead in production.
+    if (
+      request.method !== "GET" &&
+      request.method !== "OPTIONS" &&
+      request.method !== "HEAD" &&
+      !url.pathname.startsWith("/webhooks/")
+    ) {
+      const authResult = await authenticateRequest(request, env);
+      if (authResult.kind === "error") return authResult.response;
+      request = new Request(request, { headers: { ...Object.fromEntries(request.headers), "X-Groundwork-Auth-Email": authResult.auth.email, "X-Groundwork-Auth-Sub": authResult.auth.sub, "X-Groundwork-Auth-Name": authResult.auth.name ?? "" } });
     }
 
     const audioResponse = await handleAudioRoute(request, env, url);

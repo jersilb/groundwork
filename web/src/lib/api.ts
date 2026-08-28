@@ -7,10 +7,22 @@
 
 const BASE = "";
 
+/** Dev-only auth bypass for `wrangler dev` / `vite` local mode. In
+ * production the Worker sits behind Cloudflare Access, which injects
+ * CF-Access-Jwt-Assertion automatically; the browser never sees a
+ * dev bypass header there. */
+const DEV_AUTH_HEADERS: Record<string, string> = import.meta.env.DEV
+  ? {
+      "X-Groundwork-Dev-User": "dev@groundwork.local",
+      "X-Groundwork-Dev-Sub": "dev-user-00000000-0000-0000-0000-000000000000",
+    }
+  : {};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {
+      ...DEV_AUTH_HEADERS,
       ...(init?.body && typeof init.body === "string" ? { "content-type": "application/json" } : {}),
       ...(init?.headers ?? {}),
     },
@@ -133,6 +145,7 @@ export const api = {
     fetch(`${BASE}/session/${sessionId}/audio/chunk?segmentKey=${segmentKey}&sequence=${sequence}&offsetMs=${offsetMs}`, {
       method: "POST",
       body,
+      headers: DEV_AUTH_HEADERS,
     }),
 
   /* synthesis */

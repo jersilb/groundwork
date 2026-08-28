@@ -31,10 +31,15 @@ async function waitForServer(timeoutMs) {
   return false;
 }
 
+const DEV_AUTH_HEADERS = {
+  "X-Groundwork-Dev-User": "dev@groundwork.local",
+  "X-Groundwork-Dev-Sub": "dev-user-00000000-0000-0000-0000-000000000000",
+};
+
 async function postJson(path, body) {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...DEV_AUTH_HEADERS, "content-type": "application/json" },
     body: JSON.stringify(body ?? {}),
   });
   const json = await res.json().catch(() => ({}));

@@ -35,7 +35,7 @@ function chunk(type, data) {
   return Buffer.concat([lenBuf, typeBuf, data, crcBuf]);
 }
 
-function solidColorPng(size, [r, g, b]) {
+function solidColorPng(size, [r, g, b], mark) {
   const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
   const ihdrData = Buffer.alloc(13);
@@ -50,14 +50,27 @@ function solidColorPng(size, [r, g, b]) {
 
   const rowLength = size * 3 + 1; // filter byte + RGB per pixel
   const raw = Buffer.alloc(rowLength * size);
+  const markColor = mark?.color ?? [246, 243, 236];
   for (let y = 0; y < size; y++) {
     const rowStart = y * rowLength;
     raw[rowStart] = 0; // no filter
     for (let x = 0; x < size; x++) {
+      let [pr, pg, pb] = [r, g, b];
+      if (mark) {
+        // Centered disc whose diameter is `mark.fraction` of the icon —
+        // used by the maskable variant so the mark survives any launcher
+        // mask (Android's safe zone is the central 80% circle).
+        const half = size / 2;
+        const radius = (size * mark.fraction) / 2;
+        const dist = Math.hypot(x + 0.5 - half, y + 0.5 - half);
+        if (dist <= radius) {
+          [pr, pg, pb] = markColor;
+        }
+      }
       const px = rowStart + 1 + x * 3;
-      raw[px] = r;
-      raw[px + 1] = g;
-      raw[px + 2] = b;
+      raw[px] = pr;
+      raw[px + 1] = pg;
+      raw[px + 2] = pb;
     }
   }
   const idat = chunk("IDAT", deflateSync(raw));
@@ -74,3 +87,10 @@ for (const size of [192, 512]) {
   writeFileSync(outPath, png);
   console.log(`Wrote ${outPath} (${png.length} bytes)`);
 }
+
+// Maskable variant: the full square is background color, with a centered
+// mark inside the launcher safe zone — every pixel survives masking.
+const maskable = solidColorPng(512, GROUNDWORK_PLACEHOLDER_COLOR, { fraction: 0.44, color: [246, 243, 236] });
+const maskablePath = path.join(REPO_ROOT, "public", "icon-maskable-512.png");
+writeFileSync(maskablePath, maskable);
+console.log(`Wrote ${maskablePath} (${maskable.length} bytes)`);

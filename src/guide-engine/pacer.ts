@@ -80,9 +80,13 @@ export function decidePacerAction(input: PacerInput): PacerDecision {
 /**
  * Escalation path — the one place PACER calls an LLM. Only invoked after
  * decidePacerAction returns "compress"; a specific recommendation on what
- * to cut requires judgment a threshold check can't provide.
+ * to cut requires judgment a threshold check can't provide. Always yields
+ * a room-facing message (the parser falls back to a safe default).
  */
-export async function escalateCompressDecision(input: PacerInput, llm: LlmClient): Promise<PacerDecision> {
+export async function escalateCompressDecision(
+  input: PacerInput,
+  llm: LlmClient,
+): Promise<{ action: "compress"; rationale: string; message_to_room: string }> {
   const response = await llm.complete({
     system:
       'You are PACER, a session-timing agent for a strategic planning facilitation tool. Decide what to cut from a discussion that has run over time. Respond with strict JSON only: {"message_to_room": string, "rationale": string}.',

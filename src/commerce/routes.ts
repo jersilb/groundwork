@@ -2,6 +2,7 @@ import type Stripe from "stripe";
 import type { Env } from "../index.ts";
 import { createStripeClient } from "./stripe-client.ts";
 import { computePriceUsd, type BillingCycle, type BudgetBand } from "./pricing.ts";
+import { requireOrgMember, getAuthFromRequest, type AuthContext } from "../auth/cloudflare-access.ts";
 
 // Commerce routes — build plan §7 Phase 7 / §9 economics. Untestable
 // against the real Stripe API from this sandbox (docs/capability-gaps.md,
@@ -30,9 +31,12 @@ interface CreateCheckoutBody {
   cancelUrl: string;
 }
 
-async function handleCreateCheckout(request: Request, env: Env, orgId: string): Promise<Response> {
+async function handleCreateCheckout(request: Request, env: Env, orgId: string, auth: AuthContext): Promise<Response> {
   const secretKey = env.STRIPE_SECRET_KEY;
   if (!secretKey) return Response.json({ error: "STRIPE_SECRET_KEY not configured" }, { status: 503 });
+
+  const membership = await requireOrgMember(env, auth, orgId);
+  if (!membership) return Response.json({ error: "not authorized for this organization" }, { status: 403 });
 
   const org = await getOrg(env, orgId);
   if (!org) return Response.json({ error: "org not found" }, { status: 404 });
@@ -69,9 +73,12 @@ async function handleCreateCheckout(request: Request, env: Env, orgId: string): 
   return Response.json({ checkoutUrl: session.url, sessionId: session.id });
 }
 
-async function handleBillingPortal(request: Request, env: Env, orgId: string): Promise<Response> {
+async function handleBillingPortal(request: Request, env: Env, orgId: string, auth: AuthContext): Promise<Response> {
   const secretKey = env.STRIPE_SECRET_KEY;
   if (!secretKey) return Response.json({ error: "STRIPE_SECRET_KEY not configured" }, { status: 503 });
+
+  const membership = await requireOrgMember(env, auth, orgId);
+  if (!membership) return Response.json({ error: "not authorized for this organization" }, { status: 403 });
 
   const org = await getOrg(env, orgId);
   if (!org?.stripe_customer_id) {
@@ -119,11 +126,22 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
     const session = event.data.object as Stripe.Checkout.Session;
     const orgId = session.metadata?.org_id;
     const band = session.metadata?.budget_band;
-    if (orgId) {
+    if (orgId && typeof session.customer === "string") {
       await env.DB.prepare(
         `UPDATE organization SET stripe_customer_id = ?1, subscription_tier = ?2 WHERE id = ?3`,
       )
-        .bind(session.customer as string, band ?? null, orgId)
+        .bind(session.customer, band ?? null, orgId)
+        .run();
+    }
+  } else if (event.type === "customer.subscription.deleted") {
+    // Portal cancellations must actually clear the tier — otherwise a
+    // cancelled org keeps its subscription_tier forever (DASHBOARD's open
+    // lifecycle gap, closed here).
+    const subscription = event.data.object as Stripe.Subscription;
+    const orgId = subscription.metadata?.org_id;
+    if (orgId) {
+      await env.DB.prepare(`UPDATE organization SET subscription_tier = NULL WHERE id = ?1`)
+        .bind(orgId)
         .run();
     }
   }
@@ -139,14 +157,22 @@ export async function handleCommerceRoute(request: Request, env: Env, url: URL):
     return handleWebhook(request, env);
   }
 
+  const auth = getAuthFromRequest(request);
+
   const checkoutMatch = url.pathname.match(CHECKOUT_ROUTE);
   if (checkoutMatch && request.method === "POST") {
-    return handleCreateCheckout(request, env, checkoutMatch[1]);
+    if (!auth) {
+      return Response.json({ error: "authentication required" }, { status: 401 });
+    }
+    return handleCreateCheckout(request, env, checkoutMatch[1], auth);
   }
 
   const portalMatch = url.pathname.match(PORTAL_ROUTE);
   if (portalMatch && request.method === "POST") {
-    return handleBillingPortal(request, env, portalMatch[1]);
+    if (!auth) {
+      return Response.json({ error: "authentication required" }, { status: 401 });
+    }
+    return handleBillingPortal(request, env, portalMatch[1], auth);
   }
 
   return null;

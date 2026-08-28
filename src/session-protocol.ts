@@ -52,6 +52,41 @@ export interface SessionState {
   submissions: Record<string, Record<string, SubmissionRecord>>;
   votes: Record<string, Record<string, VoteRecord>>; // segmentKey -> voterUuid -> vote
   startedAt: string;
+  /** ISO timestamp of when the current segment started — PACER's input.
+   * Optional so pre-guide checkpoints (which lack it) still restore; the
+   * restore path defaults it to the checkpoint time. */
+  segmentStartedAt?: string;
+  /** Guide Engine messages addressed to the room, oldest last, capped.
+   * Rides the normal state broadcast so rejoins see full history. */
+  guideLog?: GuideMessage[];
+}
+
+/** Protocol input limits. Rooms are 6-12 people; these caps exist to stop a
+ * misbehaving client from growing the in-memory state, every future
+ * broadcast, and the D1 checkpoint without bound — not to constrain real
+ * facilitation (a 2,000-char answer is already an essay). */
+export const MAX_SUBMISSION_CHARS = 2000;
+export const MAX_VOTE_OPTION_CHARS = 200;
+export const MAX_SUBMISSIONS_PER_SEGMENT = 100;
+export const MAX_GUIDE_LOG_ENTRIES = 25;
+
+/** A Guide Engine message addressed to the room. Emitted by PACER (pacing
+ * recommendations — never a forced advance; §5.5 keeps the leader
+ * absolute), EVALUATOR/PROBER (follow-up questions when input runs thin),
+ * and SYNTHESIZER (segment-boundary draft summaries). Guide messages ride
+ * inside the normal state broadcast as `guideLog` so a rejoining client
+ * sees the full history — no separate replay transport needed. */
+export type GuideMessageKind = "pacer" | "probe" | "synthesis" | "evaluator";
+
+export interface GuideMessage {
+  id: string;
+  kind: GuideMessageKind;
+  /** What the room sees. Professional facilitator voice, no emoji. */
+  text: string;
+  /** Machine context: why the guide said this (verdict, overrun %, ...). */
+  detail?: string;
+  segmentKey: string;
+  createdAt: string;
 }
 
 /** Leader-only mutation payloads (screen role). §5.5: "Leader override is

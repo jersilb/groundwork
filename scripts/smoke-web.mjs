@@ -41,7 +41,9 @@ async function startWrangler() {
 }
 
 async function main() {
-  let exitCode = 1;
+  // Any failed route / console error / failed request sets this to 1 —
+  // it starts at 0 because "no failures observed" IS the pass condition.
+  let exitCode = 0;
   let browser;
   let wrangler;
   try {

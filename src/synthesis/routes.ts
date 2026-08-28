@@ -1,9 +1,11 @@
 import type { Env } from "../index.ts";
 import type { SegmentSpec } from "../guide-engine/segment-schema.ts";
+import { parseSegmentSpec } from "../guide-engine/segment-schema.ts";
 import { runSynthesizer, ProvenanceVerificationError, SynthesizerParseError } from "../guide-engine/synthesizer.ts";
 import { AnthropicLlmClient } from "../guide-engine/llm-client.ts";
 import { saveArtifact, getCurrentArtifacts } from "./plan-artifact-store.ts";
 import { assembleOnePager, renderOnePagerMarkdown } from "./one-pager.ts";
+import { authorizeSessionAccess } from "../auth/authorize.ts";
 
 interface SynthesizeRequestBody {
   segment: SegmentSpec;
@@ -19,6 +21,14 @@ async function handleSynthesize(request: Request, env: Env, sessionId: string): 
   const body = (await request.json()) as SynthesizeRequestBody;
   if (!body.segment || !Array.isArray(body.submissions)) {
     return Response.json({ error: "segment and submissions are required" }, { status: 400 });
+  }
+  // The segment spec is validated before it reaches the model: a malformed
+  // spec (missing rubric, bad enum) would otherwise surface as a confusing
+  // 502 from the LLM call instead of a precise 400 here.
+  try {
+    parseSegmentSpec(body.segment);
+  } catch (err) {
+    return Response.json({ error: "invalid segment spec", message: String(err) }, { status: 400 });
   }
 
   const llm = new AnthropicLlmClient(apiKey);
@@ -55,6 +65,12 @@ export async function handleSynthesisRoute(request: Request, env: Env, url: URL)
   const match = url.pathname.match(SYNTHESIS_ROUTE);
   if (!match) return null;
   const [, sessionId, action] = match;
+
+  // Org authorization for real lab rooms — GET /plan included. The
+  // one-page plan is the most sensitive output this Worker serves; it must
+  // not be world-readable given a session key.
+  const access = await authorizeSessionAccess(request, env, sessionId);
+  if (access.kind === "error") return access.response;
 
   if (action === "synthesize" && request.method === "POST") {
     return handleSynthesize(request, env, sessionId);

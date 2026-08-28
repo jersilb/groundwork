@@ -18,6 +18,20 @@ export interface SubmissionRecord {
   content: string;
 }
 
+/** A Guide Engine message addressed to the room (mirror of the server's
+ * session-protocol.ts type). Guide messages ride the normal state
+ * broadcast as `guideLog` so a rejoining client sees the full history. */
+export type GuideMessageKind = "pacer" | "probe" | "synthesis" | "evaluator";
+
+export interface GuideMessage {
+  id: string;
+  kind: GuideMessageKind;
+  text: string;
+  detail?: string;
+  segmentKey: string;
+  createdAt: string;
+}
+
 export interface SessionState {
   sessionId: string;
   stateVersion: number;
@@ -31,6 +45,10 @@ export interface SessionState {
   submissions: Record<string, Record<string, SubmissionRecord>>;
   votes: Record<string, Record<string, VoteRecord>>; // segmentKey -> voterUuid -> vote
   startedAt: string;
+  /** ISO timestamp of when the current segment started (PACER's input). */
+  segmentStartedAt?: string;
+  /** Guide Engine messages to the room, oldest last, capped server-side. */
+  guideLog?: GuideMessage[];
 }
 
 /** Leader-only mutation payloads (screen role) — server contract for

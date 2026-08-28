@@ -42,6 +42,15 @@ queue = "groundwork-transcription"
 queue = "groundwork-transcription"
 max_batch_size = 10
 max_batch_timeout = 5
+# Ceiling on the retry loop for transient Whisper failures — an
+# unrepairable chunk must reach transcription_error and stop, not spin.
+max_retries = 5
+
+# In-session Guide Engine master switch (see Env.GUIDE_ENABLED in
+# src/index.ts). Local dev/tests override this to "false" in .dev.vars so
+# no suite depends on a live LLM.
+[vars]
+GUIDE_ENABLED = "true"
 
 # Workers AI (Whisper transcription). Real inference always calls out to
 # Cloudflare's service, even under `wrangler dev` — there is no local

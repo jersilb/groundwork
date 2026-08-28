@@ -24,6 +24,10 @@ import path from "node:path";
 
 const PORT = 8793;
 const BASE = `http://127.0.0.1:${PORT}`;
+const DEV_AUTH_HEADERS = {
+  "X-Groundwork-Dev-User": "dev@groundwork.local",
+  "X-Groundwork-Dev-Sub": "dev-user-00000000-0000-0000-0000-000000000000",
+};
 const WS_BASE = `ws://127.0.0.1:${PORT}`;
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const PERSIST_DIR = path.join("/tmp", `gw-session-test-${process.pid}-${Date.now()}`);
@@ -88,9 +92,11 @@ function killWrangler(wr) {
   }
 }
 
-function connectClient(role, clientId, sessionKey) {
+function connectClient(role, clientId, sessionKey, screenToken) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${WS_BASE}/session/${sessionKey}/connect?role=${role}&clientId=${clientId}`);
+    let url = `${WS_BASE}/session/${sessionKey}/connect?role=${role}&clientId=${clientId}`;
+    if (screenToken) url += `&screenToken=${encodeURIComponent(screenToken)}`;
+    const ws = new WebSocket(url);
     const states = [];
     ws.addEventListener("message", (ev) => {
       const msg = JSON.parse(ev.data);
@@ -122,7 +128,7 @@ async function waitForCondition(fn, timeoutMs, label) {
 async function postJson(p, body) {
   const res = await fetch(`${BASE}${p}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...DEV_AUTH_HEADERS, "content-type": "application/json" },
     body: JSON.stringify(body ?? {}),
   });
   const json = await res.json().catch(() => ({}));
@@ -339,11 +345,27 @@ async function main() {
     console.log("PASS: reopening the same lab is idempotent (same key, 201).");
 
     const missing = await postJson("/lab-session/does-not-exist-1234/open", {});
-    if (missing.res.status !== 404) throw new Error(`expected 404 for unknown lab, got ${missing.res.status}`);
-    console.log("PASS: opening a nonexistent lab_session returns 404.");
+    // With auth wired, an unknown lab maps to no org, so the route returns
+    // 403 rather than leaking whether the id exists. This is the expected
+    // security behavior for authenticated-but-unauthorized resources.
+    if (missing.res.status !== 403) throw new Error(`expected 403 for unknown lab (no org membership), got ${missing.res.status}`);
+    console.log("PASS: opening a nonexistent lab_session returns 403 (auth-first security behavior).");
 
-    const labScreen = await connectClient("screen", "lab-screen", expectedKey);
+    // Screen-role authorization: the open call minted a token; a screen
+    // without it must be refused, and the leader's screen (with it) works.
+    if (!opened.json.screenToken) throw new Error("open did not return a screenToken");
+    const deniedScreen = await connectClient("screen", "lab-screen-denied", expectedKey).catch(() => null);
+    if (deniedScreen) {
+      throw new Error("screen connect without a token should have been rejected");
+    }
+    console.log("PASS: screen connect without the room's screen token is rejected.");
+
+    const labScreen = await connectClient("screen", "lab-screen", expectedKey, opened.json.screenToken);
     await waitForCondition(() => labScreen.states.length >= 1, 5000, "lab room state");
+    if (!Array.isArray(latestState(labScreen).guideLog)) {
+      throw new Error("session state must carry a guideLog array (guide disabled locally => empty)");
+    }
+    console.log("PASS: session state carries the guideLog field (guide disabled locally => empty).");
     send(labScreen, { type: "submit", segmentKey: "welcome", clientUuid: "lab-uuid-1", content: "Real session submission" });
     await waitForCondition(() => latestState(labScreen).submissionCounts.welcome === 1, 5000, "lab submission counted");
     send(labScreen, { type: "advance_segment" });
@@ -394,4 +416,3 @@ const watchdog = setTimeout(() => {
 watchdog.unref();
 
 main();
-

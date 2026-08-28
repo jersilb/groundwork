@@ -18,6 +18,10 @@ import { spawn, execFileSync } from "node:child_process";
 
 const PORT = 8796;
 const BASE = `http://127.0.0.1:${PORT}`;
+const DEV_AUTH_HEADERS = {
+  "X-Groundwork-Dev-User": "dev@groundwork.local",
+  "X-Groundwork-Dev-Sub": "dev-user-00000000-0000-0000-0000-000000000000",
+};
 const SESSION_KEY = `phase4-test-${Date.now()}`;
 
 function sleep(ms) {
@@ -76,7 +80,7 @@ async function main() {
 
     const noConsentRes = await fetch(
       `${BASE}/session/${SESSION_KEY}/audio/chunk?segmentKey=welcome&sequence=0&offsetMs=0`,
-      { method: "POST", body: new Uint8Array([1, 2, 3, 4]) },
+      { method: "POST", headers: DEV_AUTH_HEADERS, body: new Uint8Array([1, 2, 3, 4]) },
     );
     if (noConsentRes.status !== 403) {
       throw new Error(`FAIL: expected 403 without consent, got ${noConsentRes.status}`);
@@ -85,7 +89,7 @@ async function main() {
 
     const consentRes = await fetch(`${BASE}/session/${SESSION_KEY}/audio/consent`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { ...DEV_AUTH_HEADERS, "content-type": "application/json" },
       body: JSON.stringify({ consentedBy: "test-leader" }),
     });
     if (!consentRes.ok) throw new Error(`FAIL: consent POST failed with ${consentRes.status}`);
@@ -94,7 +98,7 @@ async function main() {
     const chunkBody = new Uint8Array(1000).fill(42); // fake audio bytes
     const uploadRes = await fetch(
       `${BASE}/session/${SESSION_KEY}/audio/chunk?segmentKey=welcome&sequence=0&offsetMs=0`,
-      { method: "POST", body: chunkBody },
+      { method: "POST", headers: DEV_AUTH_HEADERS, body: chunkBody },
     );
     if (!uploadRes.ok) throw new Error(`FAIL: chunk upload failed with ${uploadRes.status}`);
     const uploadJson = await uploadRes.json();
@@ -106,20 +110,20 @@ async function main() {
 
     const uploadRes2 = await fetch(
       `${BASE}/session/${SESSION_KEY}/audio/chunk?segmentKey=welcome&sequence=1&offsetMs=60000`,
-      { method: "POST", body: chunkBody },
+      { method: "POST", headers: DEV_AUTH_HEADERS, body: chunkBody },
     );
     if (!uploadRes2.ok) throw new Error(`FAIL: second chunk upload failed with ${uploadRes2.status}`);
     console.log("PASS: second chunk uploaded (sequence=1) — zero lost chunks so far.");
 
     const killRes = await fetch(`${BASE}/session/${SESSION_KEY}/audio/kill-switch`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { ...DEV_AUTH_HEADERS, "content-type": "application/json" },
       body: JSON.stringify({ engaged: true }),
     });
     if (!killRes.ok) throw new Error(`FAIL: kill-switch POST failed with ${killRes.status}`);
     const blockedRes = await fetch(
       `${BASE}/session/${SESSION_KEY}/audio/chunk?segmentKey=welcome&sequence=2&offsetMs=120000`,
-      { method: "POST", body: chunkBody },
+      { method: "POST", headers: DEV_AUTH_HEADERS, body: chunkBody },
     );
     if (blockedRes.status !== 403) {
       throw new Error(`FAIL: expected 403 after kill switch engaged, got ${blockedRes.status}`);

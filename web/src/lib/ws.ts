@@ -25,13 +25,19 @@ export interface SessionSocketOptions {
    * only — they are not idempotent and must not be replayed after a
    * reload. Defaults to false. */
   durableOutbox?: boolean;
+  /** Screen-role authorization token for real lab rooms — minted by
+   * POST /lab-session/:id/open and validated by the SessionDO on the
+   * upgrade. Phones never send one. */
+  screenToken?: string;
 }
 
-function wsUrlFor(key: string, role: ClientRole, clientId: string): string {
+function wsUrlFor(key: string, role: ClientRole, clientId: string, screenToken?: string): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   // The SessionDO authorizes identity at UPGRADE time via query params
-  // (role + clientId) — the join message is an ack point, not the gate.
+  // (role + clientId, plus screenToken for screen role on real rooms) —
+  // the join message is an ack point, not the gate.
   const params = new URLSearchParams({ role, clientId });
+  if (role === "screen" && screenToken) params.set("screenToken", screenToken);
   return proto + "//" + window.location.host + "/session/" + key + "/connect?" + params.toString();
 }
 
@@ -71,7 +77,7 @@ export class SessionSocket {
     options: SessionSocketOptions = {},
   ) {
     this.sessionKey = sessionKey;
-    this.url = wsUrlFor(sessionKey, role, clientId);
+    this.url = wsUrlFor(sessionKey, role, clientId, options.screenToken);
     this.role = role;
     this.clientId = clientId;
     this.handlers = handlers;

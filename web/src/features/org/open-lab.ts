@@ -11,6 +11,9 @@ import { ApiError } from "../../lib/api";
 export interface OpenLabResult {
   sessionKey: string;
   connectPath: string;
+  /** Screen-role token: the leader's browser carries this into the room
+   * URL (?st=...) and the SessionSocket presents it on the upgrade. */
+  screenToken: string;
 }
 
 // Same-origin always (see lib/api.ts for why VITE_API_BASE_URL is avoided).

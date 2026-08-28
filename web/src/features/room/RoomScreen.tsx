@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { SessionSocket } from "../../lib/ws";
 import { useSession, getOrCreateClientId } from "../../lib/session-store";
 import RoomHeader from "./screen/RoomHeader";
@@ -10,18 +10,47 @@ import VoteResults from "./screen/VoteResults";
 import AudioConsentCard from "./screen/AudioConsentCard";
 import LeaderControls from "./screen/LeaderControls";
 import PrepareRoom from "./screen/PrepareRoom";
+import GuidePanel from "./screen/GuidePanel";
+
+/** Screen-role token for real lab rooms: delivered as ?st= by the
+ * dashboard's open flow and mirrored to sessionStorage so a mid-lab
+ * refresh on the same device reconnects without another open call. */
+function resolveScreenToken(urlToken: string | null, sessionKey: string): string | undefined {
+  if (urlToken) return urlToken;
+  try {
+    return sessionStorage.getItem("groundwork.screenToken." + sessionKey) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * The shared screen in the room: the AI-facilitated lab surface everyone
- * watches. Connects as the screen role, renders live segment state, the
- * vote tally, recording consent + kill switch, and the leader's advance
- * control.
+ * watches. Connects as the screen role (presenting the screen token for
+ * real lab rooms), renders live segment state, the Guide's facilitation
+ * feed, the vote tally, recording consent + kill switch, and the leader's
+ * advance control.
  */
 export default function RoomScreen() {
   const { key = "" } = useParams();
+  const [searchParams] = useSearchParams();
+  const screenToken = useMemo(
+    () => resolveScreenToken(searchParams.get("st"), key),
+    [searchParams, key],
+  );
+  // The token authorizes leader actions — it must not linger in the URL
+  // bar of a screen that is often projected to the whole room. Capture it
+  // once (also mirrored to sessionStorage by the open flow), then strip it.
+  useEffect(() => {
+    if (searchParams.get("st")) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("st");
+      window.history.replaceState(null, "", url.pathname + url.search);
+    }
+  }, [searchParams]);
   const socket = useMemo(
-    () => new SessionSocket(key, "screen", getOrCreateClientId()),
-    [key],
+    () => new SessionSocket(key, "screen", getOrCreateClientId(), {}, { screenToken }),
+    [key, screenToken],
   );
   const { state, status } = useSession(socket);
   const [pendingAdvance, setPendingAdvance] = useState<number | null>(null);
@@ -73,8 +102,15 @@ export default function RoomScreen() {
                 total={totalSegments}
               />
             </div>
-            <LiveCounts submissions={submissions} submitters={submitters} />
-            {hasVotes && <VoteResults votes={segmentVotes} />}
+            <div className="mt-6 grid gap-6 lg:grid-cols-3">
+              <div className="space-y-6 lg:col-span-2">
+                <LiveCounts submissions={submissions} submitters={submitters} />
+                {hasVotes && <VoteResults votes={segmentVotes} />}
+              </div>
+              <div>
+                <GuidePanel messages={state?.guideLog ?? []} />
+              </div>
+            </div>
           </>
         ) : (
           <PrepareRoom sessionKey={key} status={status} />

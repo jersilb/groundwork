@@ -6,17 +6,19 @@
 
 ## Date & Session Context
 
-**Date**: 2026-08-16
-**Session goal**: Production-ready MVP — achieved. Full frontend built (web/, Vite/React PWA), session resilience + leader override + real lab wiring landed, 15/15 verification gates green, **deployed to https://groundwork.jersilb.workers.dev and verified live** (health, SPA shell, real WebSocket session).
+**Date**: 2026-08-27
+**Session goal**: Deep-dive hardening — achieved. The AI Guide now runs live inside real sessions (PACER/EVALUATOR/PROBER/SYNTHESIZER wired into SessionDO), critical security holes from the auth session are closed, and the Worker redeploys with migration 0005. Full findings: `OUTPUTS/deep-dive-report-2026-08-27.md`.
 
 ---
 
 ## What Happened Since Last Session
 
-- Six-agent build under an AI director: shared-screen room UI, phone client (durable offline outbox), org dashboard/program screens, real-tier billing, install flow, landing, production service worker.
-- Worker now serves the PWA (assets binding + SPA fallback); reconnect/replay hardened (D1 checkpoint restore on eviction); POST /lab-session/:id/open opens real lab rooms; leader-override contract added.
-- New tests: scripts/test-session-integration.mjs, scripts/smoke-web.mjs (full-stack real-Chromium). All 15 gates green.
-- Deployed 2026-08-16 (replaced the 2026-08-02 frontend-less build). Secrets persist: ANTHROPIC_API_KEY, STRIPE_SECRET_KEY.
+- Guide Engine wired live in `SessionDO` (`src/guide-engine/session-guide.ts`): guide messages ride `guideLog` in the state broadcast; shared screen shows a Guide panel, phones show probe prompts. `GUIDE_ENABLED=true` in prod, false locally so tests stay deterministic.
+- `/webhooks/stripe` fixed (was 401-dead in production — the auth gate pre-routed ALL non-GETs; Stripe can't present an Access JWT). Subscription deletion now clears the tier.
+- Org authorization on session-scoped routes (`src/auth/authorize.ts`): plan reads, synthesize, consent/kill-switch/chunk uploads for `lab-` rooms require org membership.
+- Screen-role token (migration 0005): opening a room (leader-only) mints `screen_token`; the DO rejects tokenless screen connections on `lab-` rooms. RoomScreen strips `?st=` so the token never projects.
+- SessionDO input caps; 10 MB chunk cap; queue `max_retries=5`; `CF_ACCESS_AUD` binding; review-cycle cross-tenant leak closed; COACH per-step error isolation; PWA maskable icon + real screenshots restored; smoke-web exit-code bug fixed.
+- New test `test:guide-runtime`; session-integration covers the token gate. All suites green 2026-08-27.
 
 ---
 
@@ -39,12 +41,13 @@
 
 - IP firewall: never touch docs/source-principles.md or content/packs/ (curriculum is human-gated); no trademarked terms (node scripts/lint-vocabulary.mjs must stay clean).
 - $200/mo soft cap (docs/economics.md). Do not create billed infra without Jeremy.
+- The guide's generic facilitation rubric (`session-guide.ts`) is our own methodology language — keep it generic until real pack specs replace `defaultSpecFor`.
 
 ---
 
 ## After This Session, AI Should (Autonomous Follow-Up)
 
-- Nothing pending: build is complete and deployed. Awaiting Jeremy's calls on Phase 2 strategy, real-device gates, pilot churches, trademark, Phase 8 curriculum.
+- None pending. Next: real-device gate day, then Phase 8 planning. Watch the first live-guide session's `guideLog` quality (probe specificity, pacer tone) and tune prompts only with eval-harness evidence.
 
 ---
 

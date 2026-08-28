@@ -1,9 +1,19 @@
 import type { Env } from "../index.ts";
+import { authorizeSessionAccess } from "../auth/authorize.ts";
 
 // HTTP routes for the audio pipeline — build plan §3.4. Consent and the
 // kill switch gate every chunk upload: no consent recorded, or the kill
 // switch engaged, and the Worker rejects the chunk outright rather than
 // silently accepting audio the room hasn't agreed to.
+//
+// Authorization: real lab rooms ("lab-<id>" session keys) require the
+// caller to belong to the org that owns the lab_session — consent state
+// and chunk uploads mutate another org's session otherwise. Ad-hoc test
+// sessions keep the pre-auth behavior (the harness depends on it).
+
+/** 10 MB — a browser MediaRecorder chunk at 64 kbps Opus is ~480 KB/min;
+ * anything near this cap is abuse, not audio. */
+const MAX_CHUNK_BYTES = 10 * 1024 * 1024;
 
 interface AudioConsentRow {
   session_id: string;
@@ -78,6 +88,9 @@ async function handleChunkUpload(request: Request, env: Env, sessionId: string, 
   if (body.byteLength === 0) {
     return Response.json({ error: "empty chunk body" }, { status: 400 });
   }
+  if (body.byteLength > MAX_CHUNK_BYTES) {
+    return Response.json({ error: `chunk exceeds ${MAX_CHUNK_BYTES} bytes` }, { status: 413 });
+  }
 
   const r2Key = `audio/${sessionId}/${segmentKey}/${sequence}.webm`;
   await env.AUDIO_BUCKET.put(r2Key, body);
@@ -103,6 +116,11 @@ export async function handleAudioRoute(request: Request, env: Env, url: URL): Pr
   const match = url.pathname.match(AUDIO_ROUTE);
   if (!match) return null;
   const [, sessionId, action] = match;
+
+  // Org authorization for real lab rooms — applies to GETs too (consent
+  // status is org data). Must run before any handler touches D1/R2.
+  const access = await authorizeSessionAccess(request, env, sessionId);
+  if (access.kind === "error") return access.response;
 
   if (action === "consent") {
     if (request.method === "GET") return handleGetConsent(env, sessionId);

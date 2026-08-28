@@ -15,6 +15,10 @@ import { spawn, execFileSync } from "node:child_process";
 
 const PORT = 8795;
 const BASE = `http://127.0.0.1:${PORT}`;
+const DEV_AUTH_HEADERS = {
+  "X-Groundwork-Dev-User": "dev@groundwork.local",
+  "X-Groundwork-Dev-Sub": "dev-user-00000000-0000-0000-0000-000000000000",
+};
 const SESSION_KEY = `phase5-test-${Date.now()}`;
 
 function sleep(ms) {

@@ -95,6 +95,12 @@ export async function completeLabSession(env: Env, labSessionId: string): Promis
 export interface OpenLabSessionResult {
   sessionKey: string;
   connectPath: string;
+  /** Leader-only secret presented by the shared screen on the WebSocket
+   * upgrade (SessionDO validates it for screen-role connections). Minted
+   * on first open and returned on every authorized open — the caller
+   * already proved org leadership, so re-delivering the current token is
+   * what lets a leader refresh (or replace) their screen mid-lab. */
+  screenToken: string;
 }
 
 /**
@@ -108,19 +114,25 @@ export interface OpenLabSessionResult {
  * finished lab cannot be reopened — same phase-gate spirit as scheduling).
  */
 export async function openLabSession(env: Env, labSessionId: string): Promise<OpenLabSessionResult | null> {
-  const session = await env.DB.prepare(`SELECT id, status FROM lab_session WHERE id = ?1`)
+  const session = await env.DB.prepare(`SELECT id, status, screen_token FROM lab_session WHERE id = ?1`)
     .bind(labSessionId)
-    .first<{ id: string; status: string }>();
+    .first<{ id: string; status: string; screen_token: string | null }>();
   if (!session) return null;
   if (session.status === "completed") {
     throw new LabSequenceError(`lab_session ${labSessionId} is completed and cannot be reopened`);
   }
 
   const sessionKey = `lab-${session.id}`;
+  let screenToken = session.screen_token;
   if (session.status !== "started") {
     const now = new Date().toISOString();
-    await env.DB.prepare(`UPDATE lab_session SET status = 'started', started_at = ?1 WHERE id = ?2`)
-      .bind(now, labSessionId)
+    // A fresh token per open: only the leader's screen (which made this
+    // authenticated POST) can hold the screen role for this room.
+    screenToken = crypto.randomUUID();
+    await env.DB.prepare(
+      `UPDATE lab_session SET status = 'started', started_at = ?1, screen_token = ?2 WHERE id = ?3`,
+    )
+      .bind(now, screenToken, labSessionId)
       .run();
     const firstSegment = FAKE_LAB_SEGMENTS[0];
     await env.DB.prepare(
@@ -129,7 +141,15 @@ export async function openLabSession(env: Env, labSessionId: string): Promise<Op
       .bind(crypto.randomUUID(), labSessionId, firstSegment.key, now, firstSegment.plannedMinutes)
       .run();
   }
-  return { sessionKey, connectPath: `/session/${sessionKey}/connect` };
+  if (!screenToken) {
+    // Room started before this token existed (migration gap) — mint one now
+    // so the room is reachable by its leader at all.
+    screenToken = crypto.randomUUID();
+    await env.DB.prepare(`UPDATE lab_session SET screen_token = ?1 WHERE id = ?2`)
+      .bind(screenToken, labSessionId)
+      .run();
+  }
+  return { sessionKey, connectPath: `/session/${sessionKey}/connect`, screenToken };
 }
 
 export async function recordConsent(env: Env, labSessionId: string, consentedBy: string): Promise<void> {

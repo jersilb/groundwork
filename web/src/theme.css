@@ -26,6 +26,18 @@
   --color-err: #a63d2f;
   --color-err-soft: #f7e6e2;
 
+  /* Inverse overlay tokens for dark/brand backgrounds */
+  --color-inverse: #ffffff;
+  --color-inverse-muted: rgba(255, 255, 255, 0.78);
+  --color-inverse-faint: rgba(255, 255, 255, 0.55);
+  --color-inverse-border: rgba(255, 255, 255, 0.22);
+  --color-inverse-border-strong: rgba(255, 255, 255, 0.42);
+  --color-inverse-hover: rgba(255, 255, 255, 0.10);
+  --color-inverse-fill-weak: rgba(255, 255, 255, 0.10);
+  --color-brand-alpha-15: rgba(30, 58, 95, 0.15);
+  --color-brand-alpha-25: rgba(30, 58, 95, 0.25);
+  --color-brand-alpha-40: rgba(30, 58, 95, 0.40);
+
   --font-display: "Fraunces", "Georgia", serif;
   --font-sans: "Sora", "Segoe UI", system-ui, sans-serif;
 
@@ -71,12 +83,18 @@
   }
   .btn:active { transform: translateY(1px); }
   .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn:focus-visible {
+    outline: 3px solid var(--color-accent);
+    outline-offset: 2px;
+  }
   .btn-primary { background: var(--color-brand); color: #fff; }
   .btn-primary:hover:not(:disabled) { background: var(--color-brand-strong); }
   .btn-accent { background: var(--color-accent); color: #fff; }
   .btn-accent:hover:not(:disabled) { background: #a8682f; }
   .btn-ghost { background: transparent; border-color: var(--color-line-strong); color: var(--color-ink); }
   .btn-ghost:hover:not(:disabled) { background: var(--color-surface); }
+  .btn-inverse { background: transparent; border-color: var(--color-inverse-border-strong); color: var(--color-inverse); }
+  .btn-inverse:hover:not(:disabled) { background: var(--color-inverse-hover); }
   .card {
     background: var(--color-surface);
     border: 1px solid var(--color-line);
@@ -114,4 +132,14 @@
     margin-bottom: 0.35rem;
   }
   .focus-ring:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 2px; }
+
+  /* Global accessible focus for links and native inputs without component classes */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: 3px solid var(--color-accent);
+    outline-offset: 2px;
+  }
 }

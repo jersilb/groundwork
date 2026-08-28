@@ -173,7 +173,7 @@ export default function Landing() {
                 <span className="flex items-center gap-2 text-sm font-semibold text-white">
                   <Monitor className="h-4 w-4" aria-hidden /> Shared screen
                 </span>
-                <span className="chip border border-white/20 bg-white/10 text-white">
+                <span className="chip border border-inverse-border bg-inverse-fill-weak text-inverse">
                   Room ABC-123
                 </span>
               </div>
@@ -196,9 +196,9 @@ export default function Landing() {
                     <span className="chip bg-accent-soft text-accent">Vote open</span>
                   </div>
                   <div className="mt-3 flex h-9 gap-1.5">
-                    <div className="flex-1 rounded-md bg-brand/15" />
-                    <div className="flex-[0.65] rounded-md bg-brand/25" />
-                    <div className="flex-[0.4] rounded-md bg-brand/40" />
+                    <div className="flex-1 rounded-md bg-brand-alpha-15" />
+                    <div className="flex-[0.65] rounded-md bg-brand-alpha-25" />
+                    <div className="flex-[0.4] rounded-md bg-brand-alpha-40" />
                   </div>
                   <p className="mt-2 text-xs text-muted">
                     Live results on the screen, where everyone can see them
@@ -252,7 +252,7 @@ export default function Landing() {
         <section className="pb-20">
           <div className="rounded-card bg-brand px-8 py-12 text-center sm:px-14">
             <h2 className="text-3xl text-white">Your first segments are free.</h2>
-            <p className="mx-auto mt-3 max-w-xl leading-relaxed text-white/80">
+            <p className="mx-auto mt-3 max-w-xl leading-relaxed text-inverse-muted">
               Try the real process with your real team before a dollar is due. No card, no
               countdown.
             </p>
@@ -262,7 +262,7 @@ export default function Landing() {
               </Link>
               <Link
                 to="/join"
-                className="btn border border-white/40 bg-transparent text-base text-white hover:bg-white/10"
+                className="btn btn-inverse text-base"
               >
                 I have a session code
               </Link>

@@ -118,14 +118,22 @@ function OrgDashboard({ orgId }: { orgId: string }) {
     setProgramError(null);
   }
 
-  /** Open the next scheduled lab as a live room and go to /session/<sessionKey>. */
+  /** Open the next scheduled lab as a live room and go to /session/<sessionKey>
+   * with the screen token (?st=...) that authorizes the leader's screen.
+   * The token is also mirrored into sessionStorage so a mid-lab refresh on
+   * the same device reconnects without a new open call. */
   async function startLiveLab() {
     if (!nextLive) return;
     setOpeningLive(true);
     setLiveError(null);
     try {
-      const { sessionKey } = await openLiveLab(nextLive.id);
-      navigate("/session/" + sessionKey);
+      const { sessionKey, screenToken } = await openLiveLab(nextLive.id);
+      try {
+        sessionStorage.setItem("groundwork.screenToken." + sessionKey, screenToken);
+      } catch {
+        /* storage unavailable — the URL param still carries it */
+      }
+      navigate("/session/" + sessionKey + "?st=" + encodeURIComponent(screenToken));
     } catch (err) {
       setLiveError(err instanceof Error ? err.message : String(err));
     } finally {

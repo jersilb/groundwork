@@ -9,6 +9,7 @@ import SegmentPrompt from "./phone/SegmentPrompt";
 import SubmitForm from "./phone/SubmitForm";
 import ReceivedCard from "./phone/ReceivedCard";
 import VoteOptions from "./phone/VoteOptions";
+import PhoneGuidePrompt from "./phone/PhoneGuidePrompt";
 import { useOutbox } from "./phone/useOutbox";
 
 /**
@@ -102,6 +103,8 @@ export default function PhoneClient() {
         <>
           <main className="flex-1 overflow-y-auto px-5 pb-5 pt-5">
             <SegmentPrompt segment={segment} index={index} total={total} />
+
+            <PhoneGuidePrompt messages={state?.guideLog ?? []} segmentKey={segment.key} />
 
             {voteOptions.length > 0 && (
               <div className="mt-5">

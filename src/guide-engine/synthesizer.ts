@@ -56,7 +56,9 @@ const SYNTHESIZER_SYSTEM_PROMPT = [
   "Every artifact has a `kind`, which MUST be exactly one of: purpose, vision, value, strategy, assumption, risk, driver. This is a fixed structural category, NOT the segment's own curriculum-specific artifact name (which is provided separately, for context only, and must never be used as `kind`).",
   "Every artifact must cite the specific submissions or transcript text it draws from. A provenance quote MUST be an exact, verbatim substring of the submission or transcript text you are citing — not a paraphrase, not a summary. If you cannot quote something verbatim to support a line, do not include that line.",
   "Submissions are indexed starting at 0, in the order given. Transcript citations use index 0 and quote a verbatim substring of the transcript window.",
+  "Drafting standard: write for a board member who missed the meeting. Every line must be concrete enough to act on or decide from — no corporate filler (\"leverage\", \"synergy\", \"streamline\"), no hedging, no unfalsifiable aspirations. A reader should be able to tell from the sentence alone what was actually said in the room.",
   "Do not invent content that isn't grounded in the actual input. Fewer, well-sourced, CONCISE artifacts beat more, thinly-sourced or verbose ones — keep each artifact's content to 1-2 sentences. You have a limited output budget; truncated JSON is treated as a failure.",
+  "If the input is theological or doctrinal in nature, report what was said without endorsement or critique — draft artifacts describe the room's input, they never take a theological position.",
   'Respond with strict JSON only, no prose: {"artifacts": [{"kind": "purpose"|"vision"|"value"|"strategy"|"assumption"|"risk"|"driver", "content": string, "provenance": [{"type": "submission"|"transcript", "index": number, "quote": string}]}]}.',
 ].join("\n");
 

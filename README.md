@@ -1,6 +1,6 @@
 # Groundwork — AI-Facilitated Strategic Planning for Faith-Based Organizations
 
-**Status**: Production-ready MVP. The full frontend is built (Vite/React PWA — shared-screen lab, phone clients with offline queue, org dashboard, billing, install flow), the Worker serves it with SPA routing, and the whole stack passes 15/15 verification gates (all phase tests, session-integration incl. eviction recovery + §5.5 leader override, PWA installability, full-stack browser smoke test). **Deployed and verified live** (replaced the 2026-08-02 frontend-less build; real D1/R2/Queue). Phase 2's gate remains measured-and-failed (EVALUATOR precision ~0.75 vs 0.8, non-reproducible on the current model — Jeremy's call on next steps). The literal hardware/judgment gates (Phases 1/3/5/7 on real devices, Phase 5's leader-edit count) and Phase 8 (curriculum + real pilot) remain human work.
+**Status**: Hardened MVP. The full frontend is built (Vite/React PWA — shared-screen lab, phone clients with offline queue, org dashboard, billing, install flow), the Worker serves it with SPA routing, and the automated verification suite is green for the covered gates. **Previously deployed and verified live**; this branch contains additional hardening that still requires redeployment. The AI Guide is wired into live sessions, while Phase 2's EVALUATOR gate remains measured-and-failed (precision ~0.75 vs 0.8, non-reproducible on the current model). Literal hardware/judgment gates and Phase 8 (curriculum + real pilot) remain human work.
 **Repo**: `jersilb1400/groundwork`
 **Stack**: Cloudflare Workers, Durable Objects, D1, R2, Workers AI (Whisper), React + Vite PWA, Anthropic API, Stripe.
 **Goal**: Walk a faith-based organization's leadership team through four full-day working sessions, purely AI-led, and leave them with a plan they actually run — not a binder that dies on a shelf.
@@ -11,8 +11,8 @@
 
 ## Current Status (Living — Updated After Every Session)
 
-**As of 2026-07-27**:
-- Confirmed working: Wrangler config, D1 schema (4 migrations), real `SessionDO` (vote support + logical-clock reconciliation), Guide Engine (segment spec schema + compiler, PACER, EVALUATOR/PROBER), real IndexedDB-backed offline queue, real audio pipeline mechanics (consent, kill switch, R2/D1/Queue), real SYNTHESIZER with provenance verification and artifact versioning, real program layer (org/program/lab_session/initiative/review_cycle CRUD, phase-gated lab sequencing, COACH nudges), real Stripe pricing/webhook-verification and an installable PWA shell (manifest, service worker, real icons — Chrome's own installability check passes with zero real errors), vocabulary lint, CI with automated Phase 1–7 test jobs.
+**As of 2026-08-27**:
+- Confirmed working: Wrangler config, D1 schema (5 migrations), real `SessionDO` (vote support + logical-clock reconciliation, checkpoint recovery, input hardening), live Guide Engine (segment spec schema + compiler, PACER, EVALUATOR/PROBER/SYNTHESIZER), real IndexedDB-backed offline queue, real audio pipeline mechanics (consent, kill switch, R2/D1/Queue), real SYNTHESIZER with provenance verification and artifact versioning, real program layer (org/program/lab_session/initiative/review_cycle CRUD, phase-gated lab sequencing, COACH nudges), real Stripe pricing/webhook-verification and an installable PWA shell (manifest, service worker, real icons — Chrome's own installability check passes with zero real errors), vocabulary lint, CI with automated Phase 1–7 test jobs.
 - Credentials: Jeremy supplied Anthropic, Cloudflare, and Stripe credentials. Anthropic works fully (network-reachable, credits added). **Cloudflare and Stripe are network-blocked from this specific sandbox regardless of credentials** — confirmed via the proxy's own status endpoint, not assumed. See `docs/capability-gaps.md`.
 - **Real finding #1**: Phase 2's gate was measured for real against `claude-sonnet-5` — precision 0.667, genuinely below the 0.8 threshold. Root-caused (EVALUATOR under-classifies vague-but-topical answers as `off_track` instead of `thin`); one prompt-tuning attempt didn't move it. Flagged as a Tier 2 decision for Jeremy rather than kept under autonomous iteration.
 - **Real finding #2**: testing SYNTHESIZER against live Opus surfaced a real data-model bug — two genuinely distinct risks in one synthesis pass would have silently overwritten each other under a "one artifact per kind" assumption. Fixed by splitting kinds into singular (purpose/vision — versioned) vs. plural (risk/driver/etc. — additive).
@@ -48,8 +48,8 @@ flowchart TD
 
 Key components:
 - `src/index.ts` — Worker entry point, health route.
-- `src/session-do.ts` — `SessionDO`, one per session. WebSocket hibernation, dedup, D1 checkpointing built in Phase 1. Not yet wired to real org/program data (Phase 6) or reconnect/replay (Phase 3).
-- `migrations/0001_init.sql` — the full data model from §4 of the build plan.
+- `src/session-do.ts` — `SessionDO`, one per session. WebSocket hibernation, dedup, D1 checkpoint recovery, reconnect/replay, leader override, input caps, and live Guide orchestration.
+- `migrations/0001_init.sql` — the full data model from §4 of the build plan; `0005_screen_token.sql` adds screen-role authorization.
 - `content/packs/church/` — curriculum as data (does not exist yet; Phase 8).
 
 Full detail → `docs/architecture.md`. Full build sequence and gates → `docs/roadmap.md`.
@@ -61,7 +61,7 @@ Full detail → `docs/architecture.md`. Full build sequence and gates → `docs/
 ```bash
 npm install
 npx wrangler dev                          # local dev server, no live Cloudflare account needed
-npx wrangler d1 migrations apply groundwork --local   # applies migrations/0001_init.sql locally
+npx wrangler d1 migrations apply groundwork --local   # applies all local migrations locally
 node scripts/lint-vocabulary.mjs                       # fails if a banned trademark term is present
 node scripts/lint-vocabulary.mjs --self-test           # proves the lint actually catches a planted term
 ```

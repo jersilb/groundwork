@@ -1,12 +1,32 @@
 # DASHBOARD — Groundwork
-**Last Updated**: 2026-08-16
-**Updated by**: AI director (six-agent build session, Jeremy away)
+**Last Updated**: 2026-08-27
+**Updated by**: Buffy (Codebuff deep-dive session, Jeremy-directed)
 
 ---
 
-## Overall Status: 🟢 MVP COMPLETE — full frontend built, full-stack verified, deployed
+## Overall Status: 🟢 GUIDE LIVE IN-SESSION + HARDENED — the AI facilitator now runs inside real rooms; security holes from the auth session closed
 
-The entire client UI is now real (previously a 19-line installability shell): Vite/React PWA with the shared-screen lab experience, phone client with offline queue, org dashboard + program screens, real-tier billing, PWA install flow, and a production service worker — all following the in-repo design system (web/src/theme.css). The Worker serves the built app with SPA routing and now includes reconnect/replay recovery (D1 checkpoint restore on eviction), the §5.5 leader-override contract, and real lab_session rooms (POST /lab-session/:id/open). **Every verification gate is green** — 15/15: typecheck (worker+web), vocabulary lint (+self-test), all phase tests 1-6, session-integration (eviction recovery, leader override, lab wiring), PWA installability (zero real Chrome errors), Stripe webhook crypto, and a full-stack browser smoke test (6/6 routes, zero console errors). The Worker is **deployed** (replacing the 2026-08-02 build, which had no frontend) and verified live. Still no live customer/revenue; the real-pilot gates (physical devices, Phase 2 gate at scale, Phase 8 curriculum, trademark) remain human work, unchanged in nature.
+The entire client UI is real: Vite/React PWA with shared-screen lab, phone client with offline queue, org dashboard, billing, PWA install flow, and service worker — all following the in-repo design system (`web/src/theme.css`). The Worker serves the built app with SPA routing, reconnect/replay recovery, §5.5 leader override, and real `lab_session` rooms.
+
+**What changed in this session (2026-08-27) — deep-dive hardening:**
+- **The AI Guide is wired into the live session** (was: libraries only, zero AI in real rooms). PACER on the 30s alarm; EVALUATOR on submissions (floor of 2, ≥30s apart); PROBER follow-ups on thin/off_track/stuck; SYNTHESIZER at segment boundaries persisting provenance-verified artifacts server-side. Guide output reaches the shared screen (`GuidePanel`) and phones (`probe` prompts) via `guideLog` in the state broadcast. Never mutates state, never auto-advances (§5.5). `GUIDE_ENABLED=true` in prod ([vars]); false locally (.dev.vars) so tests stay deterministic.
+- **Stripe webhook fixed** — was 401-dead in production (auth gate ran before routing on all non-GETs; Stripe can't present an Access JWT). `/webhooks/*` now exempt; `customer.subscription.deleted` clears the tier.
+- **Org authorization on session-scoped routes** (synthesize, plan GET, consent, kill-switch, chunk upload) — previously any authenticated user of ANY org could read another org's one-page plan or write artifacts into its session.
+- **Screen-role token** — `POST /lab-session/:id/open` (leader-only) mints a token the shared screen presents on its WebSocket upgrade; anyone with the join code can no longer self-assert the screen role and issue leader overrides. Migration 0005.
+- **Cross-tenant leak closed** on `/review-cycle/:id/complete` (arbitrary body `programId` used to return another org's health snapshot).
+- **SessionDO input caps** (segment keys validated; submissions ≤ 2,000 chars/100 per segment; vote options ≤ 200), 10 MB audio-chunk cap, queue `max_retries = 5`, `CF_ACCESS_AUD` audience binding, COACH per-step error isolation.
+- **PWA installability restored** — manifest referenced a maskable icon + screenshots that never existed; both now real (generated icon, actual app screenshots via Playwright).
+- **EVALUATOR/PROBER/SYNTHESIZER prompts upgraded** to facilitator-grade quality bars with doctrinal-neutrality guardrails (JSON contracts unchanged).
+- Full findings + evidence: `OUTPUTS/deep-dive-report-2026-08-27.md`. Verification: typecheck + all 12 suites green (incl. new `test:guide-runtime`).
+
+**What changed in the previous session (2026-08-16/17):**
+- Authentication and org authorization wired across all state-changing API routes (`/org`, `/program`, `/lab-session`, `/session/*/audio/*`, `/session/*/synthesize`, `/org/*/checkout-session`, `/org/*/billing-portal`) using Cloudflare Access JWT validation with a dev bypass for local testing.
+- Design system cleaned: inverse-background tokens replace opacity utilities on the landing page, `:focus-visible` added to interactive elements, PWA manifest copy is no longer placeholder, and dependencies are pinned to exact versions.
+- EVALUATOR non-determinism mitigation: added `runEvaluatorRepeated()` that runs N times and gates on the worst verdict, since `claude-sonnet-5` rejects `temperature=0`.
+
+**Verification suite**: 13/13 automated gates green in this sandbox (Phases 1, 3, 4, 6, session-integration, PWA installability, Stripe webhook crypto, parsing tests, typecheck, vocab lint). Phase 5 and live commerce tests are skipped here because `ANTHROPIC_API_KEY` / `STRIPE_SECRET_KEY` are not exported in this shell, not because of code failures. Phase 2 remains measured-and-failed (precision ~0.75 vs 0.8) even with the repeated-run helper; the gate needs either a model that supports determinism or a much larger labeled fixture set.
+
+**What is still not an MVP**: no real curriculum exists (`content/packs/` is intentionally empty; only a 7-minute fake lab runs); the literal human gates (physical devices, leader edit count, real iOS/Android install) are unrun; and the "Groundwork" name still carries trademark collision risk. Do not call this customer-ready until those are closed.
 
 ---
 
@@ -14,12 +34,12 @@ The entire client UI is now real (previously a 19-line installability shell): Vi
 
 | Metric | Value | Status | Last Checked |
 |--------|-------|--------|--------------|
-| Gates passed | Phase(s) 0, 1, 3, 4, 6 (automated proxies where hardware would be needed) | 🟢 | 2026-08-16 |
-| Gates measured and FAILED | Phase(s) 2 (EVALUATOR precision 0.75 vs 0.8 — non-reproducible on current model) | 🔴 | 2026-07-31 |
-| Built, awaiting human gate | Phase(s) 1/3/5/7 literal device & judgment gates | 🟡 | 2026-08-16 |
+| Automated gates green | Phase(s) 1, 3, 4, 6; session-integration; PWA installability; Stripe webhook crypto; EVALUATOR/PROBER/SYNTHESIZER parsing | 🟢 | 2026-08-17 |
+| Gates measured and FAILED | Phase 2 EVALUATOR precision ~0.75 vs 0.8; non-determinism partially mitigated by repeated-run helper, not eliminated | 🔴 | 2026-08-17 |
+| Built, awaiting human gate | Phases 1/3/5/7 literal device & judgment gates; Phase 8 curriculum | 🟡 | 2026-08-17 |
 | Frontend (all screens) | built + smoke-tested, PWA installable | 🟢 | 2026-08-16 |
-| Full verification suite | 15/15 green (phase tests, integration, PWA, smoke) | 🟢 | 2026-08-16 |
-| Worker deployment | live (built PWA + API, real D1/R2/Queue) | 🟢 | 2026-08-16 |
+| Full verification suite | 13/13 green in sandbox; Phase 5 + live commerce skipped due to missing env vars (expected) | 🟢 | 2026-08-17 |
+| Worker deployment | live (built PWA + API, real D1/R2/Queue) — unchanged | 🟢 | 2026-08-16 |
 | vocabulary_lint | clean | 🟢 | 2026-08-16 |
 | monthly_spend_usd | within $200/mo soft cap | 🟢 | 2026-08-16 |
 
@@ -66,6 +86,8 @@ Full definitions and thresholds → `docs/metrics.md`.
 
 ---
 
+- 2026-08-16/17: End-to-end independent adversarial review completed (`OUTPUTS/groundwork-adversarial-review-2026-08-16.md`). Review found the project status was being overstated, auth was entirely missing, and the design system had token leaks. Follow-up updates this session: Cloudflare Access JWT auth + org authorization wired across all state-changing routes; design token leaks fixed; PWA manifest placeholder copy removed; dependencies pinned to exact versions; EVALUATOR repeated-run helper added. Automated tests updated to carry dev auth headers. DASHBOARD.md updated to stop claiming "15/15 gates green" and instead distinguish automated sandbox gates from literal human gates.
+
 ## Next 7 Days (Planned)
 
 - **Immediate**: Jeremy runs `wrangler deploy` plus the two secret commands (`docs/decisions.md`, 2026-08-01) to get the Worker actually live.
@@ -80,12 +102,12 @@ Full definitions and thresholds → `docs/metrics.md`.
 
 | Item | Value |
 |------|-------|
-| Last health check | 2026-07-26 (manual) |
-| Last deployment | None — no live deploy yet |
+| Last health check | 2026-08-17 (automated typecheck + phase tests) |
+| Last deployment | 2026-08-16 (live Worker, unchanged this session) |
 | Last weekly report | N/A — reporting is event-driven, not weekly |
 | Errors (7-day count) | 0 |
 | Monthly spend (MTD / budget) | $0 / $200 |
-| `docs/capability-gaps.md` open items | 7 (live Cloudflare provisioning, auth provider choice, physical device test, Phase 3 literal-scale drill, Cloudflare/Stripe network-blocked in this sandbox, Phase 5 needs a real leader's edit count, Phase 7 needs real iOS/Android device installs) — 3 resolved, 2 superseded this session |
+| `docs/capability-gaps.md` open items | Auth provider choice resolved (Cloudflare Access wired); remaining: physical device test, Phase 3 literal-scale drill, Phase 5 leader edit count, Phase 7 real iOS/Android install, real curriculum in `content/packs/`, EVALUATOR determinism, "Groundwork" trademark clearance |
 
 ---
 

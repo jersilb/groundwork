@@ -9,6 +9,11 @@ import { spawn } from "node:child_process";
 const PORT = 8794;
 const BASE = `http://127.0.0.1:${PORT}`;
 
+const DEV_AUTH_HEADERS = {
+  "X-Groundwork-Dev-User": "dev@groundwork.local",
+  "X-Groundwork-Dev-Sub": "dev-user-00000000-0000-0000-0000-000000000000",
+};
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -30,7 +35,7 @@ async function waitForServer(timeoutMs) {
 async function postJson(path, body) {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...DEV_AUTH_HEADERS, "content-type": "application/json" },
     body: JSON.stringify(body ?? {}),
   });
   const json = await res.json().catch(() => ({}));
@@ -96,7 +101,7 @@ async function main() {
     console.log("6. Complete Lab 1...");
     const { res: completeRes } = await postJson(`/lab-session/${lab1Id}/complete`, {});
     if (!completeRes.ok) throw new Error(`FAIL: completing lab 1 failed with ${completeRes.status}`);
-    const progCheckRes = await fetch(`${BASE}/program/${programId}`);
+    const progCheckRes = await fetch(`${BASE}/program/${programId}`, { headers: DEV_AUTH_HEADERS });
     const progState = await progCheckRes.json();
     if (progState.current_lab !== 1 || progState.status !== "in_progress") {
       throw new Error(`FAIL: expected program.current_lab=1, status=in_progress after Lab 1, got ${JSON.stringify(progState)}`);
@@ -119,7 +124,7 @@ async function main() {
     console.log(`PASS: initiative + overdue step created (due ${pastDue}).`);
 
     console.log("8. Confirm the step shows up as overdue...");
-    const overdueRes = await fetch(`${BASE}/program/${programId}/overdue-steps`);
+    const overdueRes = await fetch(`${BASE}/program/${programId}/overdue-steps`, { headers: DEV_AUTH_HEADERS });
     const overdueJson = await overdueRes.json();
     if (overdueJson.steps.length !== 1) {
       throw new Error(`FAIL: expected 1 overdue step, got ${overdueJson.steps.length}`);
