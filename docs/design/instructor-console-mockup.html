@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Groundwork · Instructor Console — Design Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ================================================================
+   GROUNDWORK INSTRUCTOR CONSOLE — design-system extension
+   Base tokens mirror web/src/theme.css (paper / ink / amber).
+   New console tokens are additive; nothing upstream changes.
+   ================================================================ */
+:root{
+  /* planning-room base (from theme.css) */
+  --paper:#f6f3ec; --surface:#ffffff; --ink:#1c2b3a; --ink-soft:#31455c;
+  --muted:#5d6b7e; --faint:#8b96a5; --line:#e4ded2; --line-strong:#cfc6b4;
+  --brand:#1e3a5f; --brand-strong:#16304f; --brand-soft:#e9eef4;
+  --accent:#c07a3e; --accent-soft:#f6ead9;
+  --ok:#2f6b4f; --ok-soft:#e4efe9; --warn:#a66a1b; --warn-soft:#f7ecd9; --err:#a63d2f; --err-soft:#f7e6e2;
+
+  /* console additions — "the director's desk" */
+  --console-nav:#14243a;            /* deep navy rail, echoes RoomHeader */
+  --console-nav-ink:#f6f3ec;
+  --clock-ink:#c07a3e;              /* the amber clock — the one memorable element */
+  --clock-behind:#a63d2f;
+  --clock-ahead:#2f6b4f;
+  --guide-voice-bg:#fbf9f4;         /* Guide's voice column, faint parchment */
+  --guide-voice-border:#e9e2d3;
+  --shadow-card:0 1px 2px rgba(28,43,58,.06),0 4px 16px rgba(28,43,58,.08);
+  --shadow-raise:0 2px 4px rgba(28,43,58,.08),0 12px 32px rgba(28,43,58,.14);
+  --radius-card:14px;
+  --font-display:"Fraunces",Georgia,serif;
+  --font-sans:"Sora","Segoe UI",system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--paper);color:var(--ink);font-family:var(--font-sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:600;letter-spacing:-.01em}
+
+/* ---------- app frame ---------- */
+.console{display:grid;grid-template-columns:236px 1fr;min-height:100vh}
+.rail{background:var(--console-nav);color:var(--console-nav-ink);padding:22px 18px;display:flex;flex-direction:column;gap:4px}
+.rail .wordmark{font-family:var(--font-display);font-size:1.35rem;font-weight:600;letter-spacing:.01em;margin-bottom:2px}
+.rail .wordmark span{color:var(--clock-ink)}
+.rail .context{font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:rgba(246,243,236,.55);margin-bottom:26px}
+.rail a{display:flex;align-items:center;gap:10px;color:rgba(246,243,236,.72);text-decoration:none;font-size:.86rem;font-weight:500;padding:9px 12px;border-radius:9px;border:1px solid transparent}
+.rail a.active{background:rgba(255,255,255,.09);color:#fff;border-color:rgba(255,255,255,.16)}
+.rail a:hover{background:rgba(255,255,255,.06)}
+.rail .section{margin-top:22px;margin-bottom:6px;font-size:.68rem;letter-spacing:.16em;text-transform:uppercase;color:rgba(246,243,236,.45)}
+.rail .foot{margin-top:auto;font-size:.72rem;color:rgba(246,243,236,.5);border-top:1px solid rgba(255,255,255,.14);padding-top:14px;line-height:1.5}
+
+/* ---------- clock ribbon (the memorable element) ---------- */
+.main{padding:26px 30px 60px;display:flex;flex-direction:column;gap:20px;max-width:1240px}
+.ribbon{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-card);box-shadow:var(--shadow-card);padding:18px 24px;display:flex;align-items:center;gap:28px;flex-wrap:wrap}
+.clock{display:flex;align-items:baseline;gap:8px}
+.clock .big{font-family:var(--font-display);font-size:2.6rem;font-weight:600;color:var(--clock-ink);font-variant-numeric:tabular-nums;line-height:1}
+.clock .unit{font-size:.8rem;color:var(--muted);font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 12px;font-size:.74rem;font-weight:600;letter-spacing:.03em}
+.pill.behind{background:var(--err-soft);color:var(--err)}
+.pill.ontrack{background:var(--ok-soft);color:var(--ok)}
+.pill.mode{background:var(--brand-soft);color:var(--brand)}
+.ribbon .segment-now{margin-left:auto;text-align:right}
+.ribbon .segment-now .label{font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+.ribbon .segment-now .name{font-family:var(--font-display);font-size:1.15rem;font-weight:600;color:var(--brand)}
+
+/* ---------- body grid ---------- */
+.grid{display:grid;grid-template-columns:1.6fr 1fr;gap:20px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-card);box-shadow:var(--shadow-card)}
+.card .head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line)}
+.card .head h3{font-size:1.02rem;color:var(--ink)}
+.card .head .kicker{font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+.card .body{padding:18px 20px}
+
+/* ---------- guide voice column ---------- */
+.voice{background:var(--guide-voice-bg);border:1px solid var(--guide-voice-border)}
+.msg{border-left:3px solid var(--line-strong);padding:12px 14px;margin:12px 0;background:#fff;border-radius:0 10px 10px 0;box-shadow:0 1px 2px rgba(28,43,58,.04)}
+.msg .who{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.msg .who .name{font-size:.8rem;font-weight:700;letter-spacing:.02em;color:var(--brand)}
+.msg .who .kind{font-size:.66rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);background:var(--paper);padding:2px 8px;border-radius:999px}
+.msg p{font-size:.92rem;color:var(--ink-soft)}
+.msg .why{margin-top:7px;font-size:.76rem;color:var(--muted);font-style:italic}
+
+/* ---------- recommendation actions ---------- */
+.actions{display:flex;gap:8px;margin-top:11px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:6px;border-radius:999px;font-weight:600;font-size:.8rem;padding:6px 14px;cursor:pointer;border:1px solid transparent;transition:background .15s ease,transform .05s ease;font-family:var(--font-sans)}
+.btn:active{transform:translateY(1px)}
+.btn:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.btn.accept{background:var(--brand);color:#fff}
+.btn.accept:hover{background:var(--brand-strong)}
+.btn.edit{background:transparent;border-color:var(--line-strong);color:var(--ink)}
+.btn.edit:hover{background:var(--paper)}
+.btn.dismiss{background:transparent;border-color:var(--line-strong);color:var(--muted)}
+.btn.dismiss:hover{background:var(--err-soft);color:var(--err)}
+
+/* ---------- timeline ---------- */
+.timeline{list-style:none;padding:4px 0}
+.timeline li{display:flex;gap:14px;padding:9px 20px;align-items:baseline}
+.timeline li.done{opacity:.62}
+.timeline li.now{background:var(--accent-soft);border-left:3px solid var(--accent);margin-left:-3px}
+.timeline .t{font-variant-numeric:tabular-nums;font-size:.78rem;font-weight:600;color:var(--muted);width:96px;flex-shrink:0}
+.timeline li.now .t{color:var(--warn)}
+.timeline .n{font-size:.9rem;font-weight:500}
+.timeline li.done .n{text-decoration:line-through;text-decoration-color:var(--line-strong)}
+.timeline .flag{margin-left:auto;font-size:.66rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--err)}
+
+/* ---------- output audit ---------- */
+.audit{list-style:none}
+.audit li{display:flex;align-items:center;gap:12px;padding:10px 20px;border-bottom:1px solid var(--line)}
+.audit li:last-child{border-bottom:none}
+.audit .name{font-size:.9rem;font-weight:500}
+.audit .status{margin-left:auto;font-size:.7rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase;padding:3px 10px;border-radius:999px}
+.audit .ok{background:var(--ok-soft);color:var(--ok)}
+.audit .gap{background:var(--err-soft);color:var(--err)}
+.audit .hold{background:var(--warn-soft);color:var(--warn)}
+
+/* ---------- health strip ---------- */
+.health{display:flex;gap:10px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);border-radius:999px;padding:7px 14px;font-size:.78rem;font-weight:500;color:var(--ink-soft);background:var(--surface)}
+.chip b{font-weight:700}
+.chip.warn{border-color:var(--warn);background:var(--warn-soft)}
+.chip.bad{border-color:var(--err);background:var(--err-soft)}
+
+/* ---------- pause shield ---------- */
+.pausebar{background:var(--brand);color:#fff;border-radius:var(--radius-card);padding:14px 22px;display:flex;align-items:center;gap:16px;box-shadow:var(--shadow-raise)}
+.pausebar .note{font-size:.8rem;color:rgba(255,255,255,.75)}
+.pausebar .spacer{margin-left:auto}
+.btn.emergency{background:#fff;color:var(--err);font-weight:700}
+.btn.ghosted{background:transparent;border-color:rgba(255,255,255,.4);color:#fff}
+.kbd{display:inline-block;border:1px solid var(--line-strong);border-bottom-width:2px;border-radius:6px;padding:0 6px;font-size:.72rem;background:var(--paper);color:var(--muted);font-weight:600}
+
+@media (max-width:1080px){.grid{grid-template-columns:1fr}.console{grid-template-columns:1fr}.rail{flex-direction:row;align-items:center;overflow-x:auto}.rail .section,.rail .foot{display:none}}
+</style>
+</head>
+<body>
+<div class="console">
+
+  <!-- ══════════ NAV RAIL ══════════ -->
+  <nav class="rail" aria-label="Console sections">
+    <div class="wordmark">Ground<span>work</span></div>
+    <div class="context">Instructor Console</div>
+    <a href="#" class="active" aria-current="page">Session overview</a>
+    <a href="#">Recommendations <span style="margin-left:auto;background:var(--accent);color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:1px 8px">3</span></a>
+    <a href="#">Itinerary control</a>
+    <a href="#">Breakouts</a>
+    <a href="#">Participants</a>
+    <a href="#">Outputs &amp; audit</a>
+    <div class="section">Session</div>
+    <a href="#">Override history</a>
+    <a href="#">Session settings</a>
+    <div class="foot">Room <b>lab-214</b> · Grace Community<br>Guide: AI instructor, human-sponsored</div>
+  </nav>
+
+  <!-- ══════════ MAIN ══════════ -->
+  <main class="main">
+
+    <!-- clock ribbon -->
+    <section class="ribbon" aria-label="Session clock">
+      <div class="clock">
+        <span class="big">4:12</span><span class="unit">of 6:00</span>
+      </div>
+      <div class="clock">
+        <span class="big" style="font-size:2.6rem">1:48</span><span class="unit">remaining</span>
+      </div>
+      <span class="pill behind">▲ 18 min behind</span>
+      <span class="pill mode">AI-led · sponsor: Jordan R.</span>
+      <div class="segment-now">
+        <div class="label">Now · Segment 6 of 9</div>
+        <div class="name">Prioritization &amp; Tradeoffs</div>
+      </div>
+    </section>
+
+    <!-- pause shield -->
+    <section class="pausebar" aria-label="Sponsor controls">
+      <strong>Sponsor controls</strong>
+      <button class="btn ghosted">Pause Guide</button>
+      <button class="btn ghosted">Take the floor</button>
+      <button class="btn ghosted">End break early</button>
+      <span class="spacer"></span>
+      <span class="note">Override is always one click away — <span class="kbd">Esc</span> pauses the Guide instantly.</span>
+      <button class="btn emergency">Emergency stop</button>
+    </section>
+
+    <!-- body -->
+    <div class="grid">
+
+      <!-- left column: recommendations + timeline -->
+      <div style="display:flex;flex-direction:column;gap:20px">
+
+        <section class="card">
+          <div class="head">
+            <h3>Guide recommendations</h3>
+            <span class="kicker">3 awaiting review</span>
+          </div>
+          <div class="body">
+            <div class="msg">
+              <div class="who"><span class="name">Guide</span><span class="kind">Pacing</span></div>
+              <p>We're 18 minutes behind and the next segment needs the full 45. I recommend trimming the closing discussion from 15 to 7 minutes and protecting the 3:20 break as scheduled.</p>
+              <div class="why">Why: closing buffer policy requires 15 protected minutes; two outputs still lack owners.</div>
+              <div class="actions">
+                <button class="btn accept">Accept</button>
+                <button class="btn edit">Edit wording</button>
+                <button class="btn dismiss">Dismiss</button>
+              </div>
+            </div>
+            <div class="msg">
+              <div class="who"><span class="name">Guide</span><span class="kind">Probe</span></div>
+              <p>Two of you mentioned the youth-program staffing gap but stopped at naming it. What's the first constraint you'd need to remove to address it this year?</p>
+              <div class="why">Why: 4 of 6 submissions flag staffing without a mechanism (rubric: specific).</div>
+              <div class="actions">
+                <button class="btn accept">Send to room</button>
+                <button class="btn edit">Edit</button>
+                <button class="btn dismiss">Dismiss</button>
+              </div>
+            </div>
+            <div class="msg">
+              <div class="who"><span class="name">Guide</span><span class="kind">Synthesis</span></div>
+              <p>Draft reading of the room: consensus on the facility timeline, unresolved on hiring pace. I've kept those separate rather than merging them. Correct me if this misses anything.</p>
+              <div class="why">Why: conflict preservation rule — disagreement surfaced, not resolved by the Guide.</div>
+              <div class="actions">
+                <button class="btn accept">Confirm as read</button>
+                <button class="btn edit">Edit</button>
+                <button class="btn dismiss">Dismiss</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="head">
+            <h3>Itinerary</h3>
+            <span class="kicker">Adjustable · full history logged</span>
+          </div>
+          <ul class="timeline">
+            <li class="done"><span class="t">0:00–0:20</span><span class="n">Welcome &amp; orientation</span></li>
+            <li class="done"><span class="t">0:20–1:05</span><span class="n">Individual reflection</span></li>
+            <li class="done"><span class="t">1:05–1:50</span><span class="n">Reality mapping</span></li>
+            <li class="done"><span class="t">1:50–2:05</span><span class="n">Break</span></li>
+            <li class="done"><span class="t">2:05–2:50</span><span class="n">Breakout · Themes &amp; tensions</span></li>
+            <li class="now"><span class="t">2:50–3:20</span><span class="n">Prioritization &amp; tradeoffs</span><span class="flag">running +18m</span></li>
+            <li><span class="t">3:20–3:35</span><span class="n">Break</span><span class="flag" style="color:var(--warn)">at risk</span></li>
+            <li><span class="t">3:35–4:20</span><span class="n">Breakout · Initiatives</span></li>
+            <li><span class="t">5:15–5:45</span><span class="n">Consolidation &amp; challenge review</span></li>
+            <li><span class="t">5:45–6:00</span><span class="n">Commitments &amp; close</span><span class="flag" style="color:var(--ok)">protected</span></li>
+          </ul>
+        </section>
+      </div>
+
+      <!-- right column: guide voice, audit, health -->
+      <div style="display:flex;flex-direction:column;gap:20px">
+
+        <section class="card voice">
+          <div class="head"><h3>Guide's voice</h3><span class="kicker">What the room sees</span></div>
+          <div class="body" style="padding-top:6px">
+            <div class="msg" style="border-left-color:var(--accent)">
+              <div class="who"><span class="name">Guide</span><span class="kind">Now</span></div>
+              <p>Take four minutes in silence and mark the two priorities you'd defend to the whole board. Then we'll compare.</p>
+            </div>
+            <div class="msg">
+              <div class="who"><span class="name">Guide</span><span class="kind">Earlier</span></div>
+              <p>Three themes keep returning: staffing the youth program, the facility deadline, and communication with small groups. Let's pressure-test each.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="head"><h3>Output audit</h3><span class="kicker">Closing gate</span></div>
+          <ul class="audit">
+            <li><span class="name">Purpose statement</span><span class="status ok">Complete</span></li>
+            <li><span class="name">Priority ranking</span><span class="status hold">In progress</span></li>
+            <li><span class="name">Initiative owners</span><span class="status gap">2 missing</span></li>
+            <li><span class="name">30-day actions</span><span class="status gap">Not started</span></li>
+            <li><span class="name">Review cadence</span><span class="status ok">Complete</span></li>
+          </ul>
+        </section>
+
+        <section class="card">
+          <div class="head"><h3>Room health</h3><span class="kicker">Operational only</span></div>
+          <div class="body health">
+            <span class="chip"><b>9</b>/10 connected</span>
+            <span class="chip"><b>8</b>/9 submitted</span>
+            <span class="chip warn">1 phone offline · Dana</span>
+            <span class="chip">Breakout B: 0/4 returned</span>
+            <span class="chip">Audio consent: 10/10</span>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

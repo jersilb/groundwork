@@ -110,3 +110,38 @@ chunks cap at 10 MB; queue consumer retries cap at 5; `CF_ACCESS_AUD`
 (audience binding) is enforced when configured. New test:
 `test:guide-runtime`; `test-session-integration` covers the screen-token
 gate; smoke-web's exit-code bug (could never exit 0) fixed.
+
+## 2026-08-28 — AI Instructor team constituted; console is design-system-first, voice deferred
+
+**Made by**: Buffy as ai-director; per Jeremy's direction (sub-agent team for
+`docs/ai-instructor-tech-scope-build-plan.md`; "highest reasoning"; frontend-design
+skill for the console design).
+
+**Decisions**:
+1. **Team topology follows the existing diamond** (`docs/agent-team.md`): orchestrator
+   brain, 3–4 concurrent hands max, reducer fan-in, clean-context verify. The AI
+   Instructor program is a *new campaign over the existing graph*, not a competing graph.
+   New roster: `instructor-ux-designer` (owns console + participant surfaces),
+   `session-orchestrator-engineer` (owns itinerary/state-machine/clock — the riskiest
+   workstream), `instructor-runtime-engineer` (owns Guide identity + typed actions),
+   `reliability-rehearsal-engineer` (owns degraded modes + 14-scenario harness).
+   Existing nodes (session-spine, frontend-ux, synthesis, evaluator, resilience,
+   curriculum-author, integration-reducer, clean-context-verifier, ip-firewall-guardian)
+   are reused, not duplicated.
+2. **§5.5 interpretation resolved**: the "leader override is absolute" invariant and the
+   new typed `GuideAction` coexist — the Guide may *speak* (recommend/instruct/ask) but
+   every *state transition* still requires a human action or a curriculum-defined
+   deterministic trigger. This is logged now because both R1 and R2 depend on it.
+3. **Model-tier policy**: smart-model rubric scored per task brief, not per agent.
+   Session-orchestrator and clean-context-verifier default Expert; instructor-runtime
+   Balanced; instructor-ux Balanced (Expert for the console visual system); reliability
+   Balanced (Fast for fixture-boilerplate tasks). Hard rule override: any task touching
+   consent, screen-token auth, or checkpoint recovery routes Expert regardless of score.
+4. **Console is design-system-first**: `frontend-design` skill applied to the existing
+   Fraunces/Sora "planning-room" tokens (theme.css) — the AI instructor surface must look
+   like the same product that already ships. Voice (R6) is explicitly deferred; no voice
+   work starts before R4 exit.
+
+**Consequences**: new `.claude/agents/` cards + `docs/ai-instructor-agent-team.md`
+roster; `.context/` bootstrapped (CONTEXT.md, VERIFY.md, DECISIONS.md, LESSONS.md);
+console mockup is the first design deliverable, gated on the existing theme tokens.
