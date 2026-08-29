@@ -1,0 +1,28 @@
+# Synthetic reference segment (test lab only — not real curriculum).
+# Modeled on build plan §7 "Breakout · Initiative/ownership packet". IP-safe.
+segment:
+  key: s7_initiatives
+  lab: 1
+  title: "Initiatives & ownership"
+  planned_minutes: 40
+  input_mode: phone_submit_then_discuss
+  min_submissions: 3
+  objective: >-
+    Turn the prioritized focus areas into named initiatives, each with a clear
+    owner, a one-sentence outcome, and a concrete first step someone commits to.
+    No initiative ships without a named steward — accountability is the product
+    of this segment.
+  rubric:
+    - id: owner_and_outcome
+      check: "Each initiative names a real owner and a specific, measurable outcome — not a vague goal."
+      fail_example_shape: "\"Improve small-group health\" with no owner or target in sight."
+    - id: first_step_concrete
+      check: "Every initiative has at least one concrete action someone commits to taking, with a timeframe."
+      fail_example_shape: "An initiative is agreed to but nobody knows what happens first."
+  exit_criteria:
+    - min_submissions_met
+  produces:
+    - artifact: initiatives_and_owners
+  fallback_if_stuck:
+    - leader_seeds_example
+    - narrow_the_frame

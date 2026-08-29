@@ -1,0 +1,29 @@
+# Synthetic reference segment (test lab only — not real curriculum).
+# Modeled on build plan §7 "Individual reflection and sharing". IP-safe.
+segment:
+  key: s2_current_reality
+  lab: 1
+  title: "Individual reflection"
+  planned_minutes: 45
+  input_mode: silent_write
+  min_submissions: 4
+  objective: >-
+    Give each participant time to reflect privately and share where they see
+    the organization's real starting point: what is genuinely working, where
+    energy is draining, and the honest gaps and tensions they notice. Diagnosis
+    precedes goal-setting; this segment surfaces the shared present before any
+    future talk begins.
+  rubric:
+    - id: specific_current_state
+      check: "Responses name real programs, people, dates, or numbers rather than generic sentiments — they describe what is actually happening now."
+      fail_example_shape: "\"We have some room to grow in outreach\" with no concrete detail about what outreach currently is."
+    - id: honest_gaps
+      check: "Responses candidly name gaps, tensions, or drains — not only safe positives."
+      fail_example_shape: "Only praise and neutral observations where a real constraint clearly exists."
+  exit_criteria:
+    - min_submissions_met
+  produces:
+    - artifact: current_reality_statements
+  fallback_if_stuck:
+    - narrow_the_frame
+    - leader_seeds_example

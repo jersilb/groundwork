@@ -1,0 +1,29 @@
+# Synthetic reference segment (test lab only — not real curriculum).
+# Modeled on build plan §7 "Consolidation and challenge review". IP-safe.
+segment:
+  key: s8_consolidation
+  lab: 1
+  title: "Consolidation & challenge review"
+  planned_minutes: 30
+  input_mode: phone_submit_then_discuss
+  min_submissions: 3
+  objective: >-
+    Step back and pressure-test the assembled plan before it is finalized.
+    Confirm that every required output exists, name any initiative still missing
+    an owner, and surface remaining unresolved questions the room has chosen to
+    carry rather than resolve today.
+  rubric:
+    - id: gaps_named
+      check: "Missing outputs, unowned initiatives, and unresolved questions are stated plainly, not papered over."
+      fail_example_shape: "The plan is treated as finished even though an initiative clearly lacks an owner."
+    - id: challenge_welcomed
+      check: "The room actively invites someone to argue against the plan, rather than assuming agreement."
+      fail_example_shape: "Consolidation is a silent review where nobody risks disagreeing."
+  exit_criteria:
+    - min_submissions_met
+    - leader_confirmed
+  produces:
+    - artifact: challenge_review_notes
+  fallback_if_stuck:
+    - anonymous_only_round
+    - narrow_the_frame

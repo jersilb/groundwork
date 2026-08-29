@@ -26,7 +26,7 @@ The entire client UI is real: Vite/React PWA with shared-screen lab, phone clien
 
 **Verification suite**: 13/13 automated gates green in this sandbox (Phases 1, 3, 4, 6, session-integration, PWA installability, Stripe webhook crypto, parsing tests, typecheck, vocab lint). Phase 5 and live commerce tests are skipped here because `ANTHROPIC_API_KEY` / `STRIPE_SECRET_KEY` are not exported in this shell, not because of code failures. Phase 2 remains measured-and-failed (precision ~0.75 vs 0.8) even with the repeated-run helper; the gate needs either a model that supports determinism or a much larger labeled fixture set.
 
-**What is still not an MVP**: no real curriculum exists (`content/packs/` is intentionally empty; only a 7-minute fake lab runs); the literal human gates (physical devices, leader edit count, real iOS/Android install) are unrun; and the "Groundwork" name still carries trademark collision risk. Do not call this customer-ready until those are closed.
+**What is still not an MVP**: no *real* curriculum exists (`content/packs/church/` is intentionally empty) — but a rich synthetic **`content/packs/_demo/` reference pack** (9 segments, ~5h15m, build-plan §7 arc) now powers test labs/rehearsals via the new `specFor()` seam, replacing the old 7-minute fake lab; the literal human gates (physical devices, leader edit count, real iOS/Android install) are unrun; and the "Groundwork" name still carries trademark collision risk. Do not call this customer-ready until those are closed.
 
 ---
 

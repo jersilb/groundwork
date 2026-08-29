@@ -80,6 +80,8 @@ jobs:
         run: npm run test:pacer
       - name: Guide runtime orchestration tests (PACER tick, evaluate/probe, synthesis contract)
         run: npm run test:guide-runtime
+      - name: Demo reference pack rehearsal (six-hour arc resolves + paces correctly)
+        run: npm run test:demo-pack
       - name: EVALUATOR/PROBER parsing and validation tests
         run: npm run test:evaluator-prober-parsing
       - name: Eval harness (self-test mode — no ANTHROPIC_API_KEY in CI yet)

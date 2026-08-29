@@ -1,0 +1,26 @@
+# Synthetic reference segment (test lab only — not real curriculum).
+# Modeled on build plan §7 "Report-back and synthesis". IP-safe.
+segment:
+  key: s5_report_back_synthesis
+  lab: 1
+  title: "Report-back & synthesis"
+  planned_minutes: 30
+  input_mode: discussion_only
+  objective: >-
+    Bring the breakout groups back together. Each group reports its themes and
+    tensions; the room confirms what it shares and openly preserves what it
+    does not. The Guide keeps differing conclusions distinguishable — no false
+    consensus.
+  rubric:
+    - id: shared_vs_contested
+      check: "The synthesis clearly separates themes the whole room confirms from themes that remain contested or unresolved."
+      fail_example_shape: "Output merges every group's result into one unanimous-sounding agenda."
+    - id: grounded_synthesis
+      check: "Each synthesized point can be traced to what a group actually reported, not invented by the summarizer."
+      fail_example_shape: "A headline theme appears in the synthesis that no breakout actually produced."
+  exit_criteria:
+    - leader_confirmed
+  produces:
+    - artifact: synthesis_notes
+  fallback_if_stuck:
+    - narrow_the_frame

@@ -15,6 +15,7 @@
     "lint:vocab": "node scripts/lint-vocabulary.mjs",
     "lint:vocab:selftest": "node scripts/lint-vocabulary.mjs --self-test",
     "specs:compile": "node --experimental-strip-types scripts/compile-segment-specs.ts",
+    "test:demo-pack": "node --experimental-strip-types scripts/test-demo-pack.ts",
     "test:phase1": "node scripts/test-phase1-multiclient.mjs",
     "test:eval-harness": "node --experimental-strip-types scripts/run-eval-harness.ts",
     "test:pacer": "node --experimental-strip-types scripts/test-pacer.ts",

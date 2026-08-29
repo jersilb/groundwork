@@ -1,0 +1,29 @@
+# Synthetic reference segment (test lab only — not real curriculum).
+# Modeled on build plan §7 "Prioritization". Uses a vote-then-discuss mode.
+segment:
+  key: s6_prioritization
+  lab: 1
+  title: "Prioritization"
+  planned_minutes: 45
+  input_mode: vote_then_discuss
+  min_submissions: 5
+  objective: >-
+    Turn the confirmed themes into a defensible priority order. Each participant
+    ranks what the organization should focus on in the next period, and the room
+    tests whether the top priorities are the ones it can actually resource —
+    while recording dissent rather than erasing it.
+  rubric:
+    - id: defensible_ranking
+      check: "The resulting priority order can be explained in terms of impact and realistic cost — not just popularity."
+      fail_example_shape: "Top items are the loudest voices rather than what the earlier reality input says matters."
+    - id: dissent_recorded
+      check: "Participants who rank differently are named and heard, not outvoted silently."
+      fail_example_shape: "A vote tallies and moves on as though the minority held the same view."
+  exit_criteria:
+    - min_submissions_met
+    - vote_completed
+  produces:
+    - artifact: priority_ranking
+  fallback_if_stuck:
+    - anonymous_only_round
+    - narrow_the_frame

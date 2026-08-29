@@ -1,0 +1,27 @@
+# Synthetic reference segment (test lab only — not real curriculum).
+# Modeled on build plan §7 "Breakout · Themes & tensions". IP-safe.
+segment:
+  key: s4_themes_tensions
+  lab: 1
+  title: "Breakout · Themes & tensions"
+  planned_minutes: 45
+  input_mode: phone_submit_then_discuss
+  min_submissions: 5
+  objective: >-
+    In small groups, surface the recurring themes and unresolved tensions that
+    must shape the plan. Each group names the two or three themes it sees as
+    make-or-break and one tension it refuses to let the room pretend away.
+  rubric:
+    - id: priority_grounded
+      check: "Named themes are concrete and tied to the earlier current-reality input, not abstract wish-lists."
+      fail_example_shape: "\"We need to be more missional\" with no link to any specific gap surfaced earlier."
+    - id: tension_named
+      check: "Groups name at least one real, specific tension rather than treating everything as easy trade-free."
+      fail_example_shape: "Every group reports total agreement with nothing risky to decide."
+  exit_criteria:
+    - min_submissions_met
+  produces:
+    - artifact: key_themes_overview
+  fallback_if_stuck:
+    - anonymous_only_round
+    - leader_seeds_example

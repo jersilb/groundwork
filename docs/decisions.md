@@ -145,3 +145,32 @@ skill for the console design).
 **Consequences**: new `.claude/agents/` cards + `docs/ai-instructor-agent-team.md`
 roster; `.context/` bootstrapped (CONTEXT.md, VERIFY.md, DECISIONS.md, LESSONS.md);
 console mockup is the first design deliverable, gated on the existing theme tokens.
+
+---
+
+## 2026-08-28 — Demo reference pack + curriculum-as-data wiring
+
+**Decision**: The guide must consume compiled curriculum by key, and a synthetic
+`content/packs/_demo/` pack should exist for test labs until organic content lands.
+
+1. **`specFor()` resolves specs by segment key** (demo/reference first, generic
+   fallback). All three live call sites in `session-do.ts` use it. Real packs plug
+   into the same seam — when `content/packs/church/` ships, matching keys upgrade
+   the Guide with no runtime change.
+2. **`_`-prefixed packs are compiled separately**: `scripts/compile-segment-specs.ts`
+   splits live vs reference dirs. Reference content emits to
+   `src/generated/demo-segment-specs.ts` and is NEVER merged into the shipped
+   `SEGMENT_SPECS` — so demo content cannot be mistaken for curriculum in prod.
+3. **The demo pack is synthetic + IP-safe**, built from the build plan §7 reference
+   itinerary and the §2.5 "what is safe" vocabulary. It is NOT real curriculum; it
+   exists so a rehearsal room exercises segment-specific objectives/rubrics.
+4. **Rehearsal is deterministic**: `test:demo-pack` (24 checks) resolves the arc and
+   asserts PACER behavior across all nine segments with no LLM/key. Wired into the
+   Phase-2 CI gate.
+5. **IP firewall re-verified for untracked content**: `lint-vocabulary` only scans
+   tracked files, so the new `_demo` YAML + report were scanned directly — 0 banned
+   terms across all 14 new files before landing.
+
+**Consequences**: `specFor()` seam (the better-feature fix); `_demo` pack runs a
+5h15m rehearsal instead of the 7-minute fake lab; flagged-but-deferred: BreakSpec/
+BreakoutSpec (Release-2) and observable `vote_completed` for the leader (M4).

@@ -1,0 +1,26 @@
+# Synthetic reference segment (test lab only — not real curriculum).
+# Modeled on build plan §7 "Welcome and orientation". IP-safe vocabulary.
+segment:
+  key: s1_welcome
+  lab: 1
+  title: "Welcome & orientation"
+  planned_minutes: 20
+  input_mode: discussion_only
+  objective: >-
+    Orient every participant to the day: who is in the room, what this planning
+    process will produce, how the AI Guide will facilitate, what the human
+    sponsor carries authority over, and how consent + recording work. Resolve
+    practical blockers before the first real exercise begins.
+  rubric:
+    - id: everyone_placed
+      check: "Everyone knows they will be heard, who the sponsor is, and how to flag a concern to a human at any time."
+      fail_example_shape: "A participant is unsure whether their input will actually be used."
+    - id: air_practical_blockers
+      check: "Logistics — timing, breaks, phones, recording consent, tech check — are acknowledged before the work starts."
+      fail_example_shape: "The room dives into content while a participant cannot join on their device."
+  exit_criteria:
+    - leader_confirmed
+  produces:
+    - artifact: orientation_agreements
+  fallback_if_stuck:
+    - narrow_the_frame

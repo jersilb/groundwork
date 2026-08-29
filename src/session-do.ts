@@ -16,9 +16,9 @@ import {
   MIN_EVALUATE_INTERVAL_MS,
   MIN_SUBMISSIONS_TO_EVALUATE,
   appendGuideMessage,
-  defaultSpecFor,
   evaluateAndMaybeProbe,
   runPacerTick,
+  specFor,
   synthesizeSegment,
   type GuideContext,
 } from "./guide-engine/session-guide.ts";
@@ -211,7 +211,7 @@ export class SessionDO extends DurableObject<Env> {
     this.guideWorkInFlight = true;
     const work = (async () => {
       const ctx = this.buildGuideContext(segmentKey);
-      const spec = defaultSpecFor(ctx.segment);
+      const spec = specFor(ctx.segment);
       const transcript = await getRollingTranscriptWindow(
         this.env,
         s.sessionId,
@@ -244,7 +244,7 @@ export class SessionDO extends DurableObject<Env> {
     this.guideWorkInFlight = true;
     const work = (async () => {
       const ctx = this.buildGuideContext(segmentKey, submissions);
-      const spec = defaultSpecFor(ctx.segment);
+      const spec = specFor(ctx.segment);
       const transcript = await getRollingTranscriptWindow(
         this.env,
         s.sessionId,
@@ -459,7 +459,7 @@ export class SessionDO extends DurableObject<Env> {
     const segmentKey = s.segments[s.currentSegmentIndex].key;
     try {
       const ctx = this.buildGuideContext(segmentKey);
-      const spec = defaultSpecFor(ctx.segment);
+      const spec = specFor(ctx.segment);
       const { message, action } = await runPacerTick(ctx, spec, llm, this.lastPacerAction);
       this.lastPacerAction = action;
       if (message) this.publishGuideMessage(message);

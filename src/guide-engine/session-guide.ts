@@ -7,6 +7,15 @@ import { runProber } from "./prober.ts";
 import { runSynthesizer } from "./synthesizer.ts";
 import type { LlmClient } from "./llm-client.ts";
 import { MODELS } from "./models.ts";
+import { DEMO_SEGMENT_SPECS } from "../generated/demo-segment-specs.ts";
+
+// Demo/reference specs (content/packs/_demo) — synthetic and clearly labeled
+// test-lab content the guide can resolve BY KEY so a rehearsal room exercises
+// segment-specific objectives and rubrics instead of the generic fallback.
+// These are NOT merged into the shipped SEGMENT_SPECS bundle (the compiler
+// emits underscore-prefixed packs separately). Always derived-style data; when
+// a real pack supplies the key, it is consulted the same way here.
+const DEMO_BY_KEY = new Map(DEMO_SEGMENT_SPECS.map((s) => [s.key, s]));
 
 // Session Guide runtime — the wiring that turns the Guide Engine agents
 // (build plan §5.3) into a live facilitator inside a session Durable Object.
@@ -41,6 +50,21 @@ export const MIN_SUBMISSIONS_TO_EVALUATE = 2;
  * input specific, candid, and on-topic. When a real pack lands with its
  * own per-segment specs, parseSegmentSpec'd specs replace this default.
  */
+/**
+ * Resolve a segment's spec by key, preferring demo/reference content when it
+ * exists and falling back to the generic facilitation rubric. This is the one
+ * seam real curriculum packs will plug into: populate a pack compiled into
+ * SEGMENT_SPECS (or extend this lookup with a live-pack registry) and the
+ * guide immediately uses that pack's objectives and rubrics for its keys.
+ */
+export function specFor(segment: SegmentDef, liveFallbackSpecs?: SegmentSpec[]): SegmentSpec {
+  const liveSpec = liveFallbackSpecs?.find((s) => s.key === segment.key);
+  if (liveSpec) return liveSpec;
+  const demoSpec = DEMO_BY_KEY.get(segment.key);
+  if (demoSpec) return demoSpec;
+  return defaultSpecFor(segment);
+}
+
 export function defaultSpecFor(segment: SegmentDef): SegmentSpec {
   return {
     key: segment.key,

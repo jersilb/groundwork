@@ -1,0 +1,29 @@
+# Synthetic reference segment (test lab only — not real curriculum).
+# Modeled on build plan §7 "Whole-group mapping". IP-safe.
+segment:
+  key: s3_purpose_clarity
+  lab: 1
+  title: "Purpose & current-reality mapping"
+  planned_minutes: 45
+  input_mode: phone_submit_then_discuss
+  min_submissions: 4
+  objective: >-
+    As a whole room, pressure-test the group's shared understanding of purpose:
+    why the organization exists, whom it serves, and the reality it works from
+    today. Bring disagreements about the starting point into the open rather
+    than papering over them.
+  rubric:
+    - id: concrete_foundation
+      check: "Responses tie claims about purpose and current reality to specific evidence from the organization's life — data, people, or concrete practices."
+      fail_example_shape: "A lofty restatement of why the group exists with no connection to anything observable."
+    - id: surfaces_disagreement
+      check: "Genuinely divergent readings of the present are named, not smoothed over."
+      fail_example_shape: "The room agrees unanimously where a real material tension obviously exists."
+  exit_criteria:
+    - min_submissions_met
+    - candor_check_passed
+  produces:
+    - artifact: purpose_and_reality_map
+  fallback_if_stuck:
+    - anonymous_only_round
+    - narrow_the_frame

@@ -1,0 +1,29 @@
+# Synthetic reference segment (test lab only — not real curriculum).
+# Modeled on build plan §7 "Commitments and close". IP-safe.
+segment:
+  key: s9_commitments_close
+  lab: 1
+  title: "Commitments & close"
+  planned_minutes: 15
+  input_mode: phone_submit_then_discuss
+  min_submissions: 3
+  objective: >-
+    Close the day by making the plan real: confirm each initiative's owner and
+    next review date, capture each person's concrete commitment before they
+    leave, and agree on how the plan will be revisited together. The session is
+    complete only when the plan has owners, cadence, and named first actions.
+  rubric:
+    - id: committed_next_step
+      check: "Every participant leaves with at least one concrete, owned commitment for the period ahead."
+      fail_example_shape: "People agree with the plan but no individual commitment is captured."
+    - id: review_cadence_set
+      check: "A concrete next review date and cadence are agreed so the plan is revisited together."
+      fail_example_shape: "The plan ends with no agreed mechanism to check on it."
+  exit_criteria:
+    - min_submissions_met
+    - leader_confirmed
+  produces:
+    - artifact: commitments_and_review_cadence
+  fallback_if_stuck:
+    - narrow_the_frame
+    - leader_seeds_example
