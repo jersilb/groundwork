@@ -224,3 +224,9 @@ BreakoutSpec (Release-2) and observable `vote_completed` for the leader (M4).
 - Break semantics decided: a break anchors to the boundary AFTER a completed segment; the next segment's clock does not run during the break; planned consumed = completed planned + min(current elapsed, current planned).
 - New permanent gates: `test:session-plan` (12), `test:session-runtime` (19), `test:six-hour-simulation` (11, injected clock + degraded scenarios), `test:spine-integration` (22 against real wrangler dev) — all wired into CI.
 - Verified: typecheck, guide-runtime 9/9, pacer 6/6, demo-pack 24/24, vocab lint clean, build:web green. Deployed to groundwork.jersilb.workers.dev (root 200, session route 200).
+
+## 2026-08-31 — Full verification sweep (user-simulation audit, session 2)
+- Re-ran the complete gate set on the committed spine batch (a216f37): typecheck, session-plan 12, session-runtime 19, six-hour simulation 11, guide-runtime 9, pacer 6, demo-pack 24, evaluator/prober parsing, spine integration smoke 22, phase1-multiclient, phase3-resilience (submission/vote replay) — all PASS.
+- Live-server verification (wrangler dev, local): / 200, /session-plans/reference 200 (9 segments / 3 breaks / 2 breakouts / 360 min), /console/:key 200, /session/:key 200.
+- Live-asset sanity: PWA manifest + cache manifest regenerate; console route serves the React app shell.
+- No new defects found in this sweep. Known open items unchanged: BreakSpec/BreakoutSpec (Release 2), degraded-mode replay harness extension.
