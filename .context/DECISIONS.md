@@ -50,3 +50,16 @@ This file mirrors the campaign-scoped calls the director makes between repo-leve
   DO stores `runtime.lastAppliedActionId` and replays of the same id are acked with current
   state instead of re-executed. Closes the reconnect-replay double-advance hole for spine
   sessions (legacy advance path keeps its existing behavior; noted as pre-existing debt).
+
+## 2026-08-31 — Shipped: session spine + console + phone Guide (a216f37)
+- Shipped the full Release-0/1 spine batch: session-plan.ts, session-runtime.ts, DO wiring behind SESSION_SPINE flag, InstructorConsole.tsx, GuideIntroCard + GuideCorrection on phone.
+- Key semantics decided: break anchors to boundary AFTER a completed segment; next segment's clock does not run during break; planned consumed = completed planned + min(current elapsed, current planned).
+- Added server-side action-id dedupe (replay double-advance attack) and only surface correction affordance on spine sessions.
+- stateVersion must bump on every spine mutation — caught by integration smoke, would have broken client convergence + D1 checkpoints.
+- Pushed to claude/subagent-team-build-plan-s2getk (a216f37). Deploy pending: needs SESSION_SPINE=true in env for spine features.
+
+## 2026-08-31 — Spine batch committed and deployed (a216f37 → db04bf2)
+- Commit a216f37: session spine (plan + pure runtime), DO wiring behind SESSION_SPINE with action-id dedupe and stateVersion bumps, React instructor console, phone Guide identity + correction, four new test gates in CI (31 files, +3862).
+- Commit db04bf2: decisions log entry.
+- Deployed via wrangler (Version 2b480ad7): root 200, /console/:key 200, /session/:key 200 on groundwork.jersilb.workers.dev.
+- Remaining from build plan: BreakSpec/BreakoutSpec (Release 2), full-session degraded-mode replay beyond the simulation harness.
