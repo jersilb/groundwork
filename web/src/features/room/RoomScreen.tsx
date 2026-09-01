@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { SessionSocket } from "../../lib/ws";
 import { useSession, getOrCreateClientId } from "../../lib/session-store";
+import { useScreenToken } from "../../lib/screen-token";
 import RoomHeader from "./screen/RoomHeader";
 import DegradedBanner from "./screen/DegradedBanner";
 import SegmentDisplay from "./screen/SegmentDisplay";
@@ -11,18 +12,6 @@ import AudioConsentCard from "./screen/AudioConsentCard";
 import LeaderControls from "./screen/LeaderControls";
 import PrepareRoom from "./screen/PrepareRoom";
 import GuidePanel from "./screen/GuidePanel";
-
-/** Screen-role token for real lab rooms: delivered as ?st= by the
- * dashboard's open flow and mirrored to sessionStorage so a mid-lab
- * refresh on the same device reconnects without another open call. */
-function resolveScreenToken(urlToken: string | null, sessionKey: string): string | undefined {
-  if (urlToken) return urlToken;
-  try {
-    return sessionStorage.getItem("groundwork.screenToken." + sessionKey) ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 /**
  * The shared screen in the room: the AI-facilitated lab surface everyone
@@ -34,10 +23,7 @@ function resolveScreenToken(urlToken: string | null, sessionKey: string): string
 export default function RoomScreen() {
   const { key = "" } = useParams();
   const [searchParams] = useSearchParams();
-  const screenToken = useMemo(
-    () => resolveScreenToken(searchParams.get("st"), key),
-    [searchParams, key],
-  );
+  const screenToken = useScreenToken(key);
   // The token authorizes leader actions — it must not linger in the URL
   // bar of a screen that is often projected to the whole room. Capture it
   // once (also mirrored to sessionStorage by the open flow), then strip it.
@@ -87,7 +73,7 @@ export default function RoomScreen() {
 
   return (
     <div className="flex min-h-screen flex-col bg-paper">
-      <RoomHeader sessionKey={key} status={status} />
+      <RoomHeader sessionKey={key} status={status} isLeaderScreen={Boolean(screenToken)} />
       {status === "reconnecting" && <DegradedBanner />}
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-8">

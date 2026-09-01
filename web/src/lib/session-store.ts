@@ -1,13 +1,14 @@
 import { useSyncExternalStore } from "react";
-import type { SessionState } from "./types";
+import type { RoomPresence, SessionState } from "./types";
 import type { SessionSocket, SocketStatus } from "./ws";
 
 export interface SessionSnapshot {
   state: SessionState | null;
   status: SocketStatus;
+  presence: RoomPresence | null;
 }
 
-const EMPTY: SessionSnapshot = { state: null, status: "idle" };
+const EMPTY: SessionSnapshot = { state: null, status: "idle", presence: null };
 
 // Module-level registry per socket: one shared snapshot + one listener set,
 // so multiple components can subscribe to the same socket without
@@ -18,9 +19,9 @@ const snapshots = new WeakMap<SessionSocket, SessionSnapshot>();
 const listenerSets = new WeakMap<SessionSocket, Set<() => void>>();
 
 function snapshotFor(socket: SessionSocket): SessionSnapshot {
-  const next: SessionSnapshot = { state: socket.state, status: socket.getStatus() };
+  const next: SessionSnapshot = { state: socket.state, status: socket.getStatus(), presence: socket.presence };
   const prev = snapshots.get(socket);
-  if (prev && prev.state === next.state && prev.status === next.status) return prev;
+  if (prev && prev.state === next.state && prev.status === next.status && prev.presence === next.presence) return prev;
   snapshots.set(socket, next);
   return next;
 }

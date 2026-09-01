@@ -1,4 +1,4 @@
-import { Compass, HelpCircle, ListChecks, Timer } from "lucide-react";
+import { Compass, HelpCircle, ListChecks, Megaphone, Timer } from "lucide-react";
 import type { GuideMessage } from "../../../lib/types";
 
 const KIND_META: Record<
@@ -27,6 +27,24 @@ const KIND_META: Record<
     label: "Draft notes",
     icon: ListChecks,
     chipClass: "bg-ok-soft text-ok",
+    textClass: "text-ink",
+  },
+  announcement: {
+    label: "Announcement",
+    icon: Megaphone,
+    chipClass: "bg-brand-soft text-brand",
+    textClass: "text-ink",
+  },
+  time_check: {
+    label: "Time check",
+    icon: Timer,
+    chipClass: "bg-warn-soft text-warn",
+    textClass: "text-ink",
+  },
+  intervention: {
+    label: "Handoff",
+    icon: Compass,
+    chipClass: "bg-err-soft text-err",
     textClass: "text-ink",
   },
 };

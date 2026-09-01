@@ -26,6 +26,19 @@ import { AnthropicLlmClient } from "./guide-engine/llm-client.ts";
 import { ProvenanceVerificationError } from "./guide-engine/synthesizer.ts";
 import { getRollingTranscriptWindow } from "./audio/transcript-window.ts";
 import { saveArtifact } from "./synthesis/plan-artifact-store.ts";
+import { SPINE_REFERENCE_PLAN, planToSegmentDefs, type SessionPlan } from "./session-plan.ts";
+import {
+  applyAction,
+  computeClock,
+  createRuntimeState,
+  cumulativeOverrunMinutes,
+  markVoteAnnounced,
+  normalizeRuntime,
+  spineTick,
+  voteQuorumReached,
+  type SpineAction,
+  type TransitionContext,
+} from "./session-runtime.ts";
 
 const CHECKPOINT_INTERVAL_MS = 30_000;
 /** Real lab rooms use the deterministic "lab-<labSessionId>" key from
@@ -72,6 +85,9 @@ export class SessionDO extends DurableObject<Env> {
   private lastEvaluatedCount: Record<string, number> = {};
   private lastPacerAction: string | undefined;
   private guideWorkInFlight = false;
+  /** The spine plan (only meaningful when SESSION_SPINE=true and this
+   * session was opened on the reference plan). Cached; plans are static. */
+  private spinePlan: SessionPlan | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -93,10 +109,54 @@ export class SessionDO extends DurableObject<Env> {
     const s = this.state!;
     if (!s.guideLog) s.guideLog = [];
     if (!s.segmentStartedAt) s.segmentStartedAt = new Date().toISOString();
+    // Spine runtime: backfill missing fields on restore and keep the DO's
+    // authoritative segment index mirrored in (the runtime index is derived
+    // bookkeeping; the DO's index is the single source of truth).
+    if (this.isSpine() && s.runtime) {
+      const rt = normalizeRuntime(s.runtime);
+      if (rt) {
+        rt.currentSegmentIndex = s.currentSegmentIndex;
+        s.runtime = rt;
+        this.spinePlan = SPINE_REFERENCE_PLAN;
+      } else {
+        // Unreadable runtime on a spine session — rebuild it so the session
+        // keeps working rather than dead-locking the console.
+        s.runtime = createRuntimeState(SPINE_REFERENCE_PLAN, Date.now());
+        s.runtime.currentSegmentIndex = s.currentSegmentIndex;
+        this.spinePlan = SPINE_REFERENCE_PLAN;
+      }
+    }
+  }
+
+  /** The session-spine flag (build plan §6 R0): new sessions opened while
+   * SESSION_SPINE=true run the six-hour reference plan with the full
+   * runtime. Existing sessions and the fake lab behave exactly as before. */
+  private isSpine(): boolean {
+    return this.env.SESSION_SPINE === "true";
   }
 
   private initialState(): SessionState {
     const sessionId = this.ctx.id.name ?? this.ctx.id.toString();
+    if (this.isSpine()) {
+      const plan = SPINE_REFERENCE_PLAN;
+      const segments = planToSegmentDefs(plan);
+      const runtime = createRuntimeState(plan, Date.now());
+      this.spinePlan = plan;
+      return {
+        sessionId,
+        stateVersion: 0,
+        currentSegmentIndex: 0,
+        segments,
+        submissionCounts: Object.fromEntries(segments.map((s) => [s.key, 0])),
+        submittedClientUuids: Object.fromEntries(segments.map((s) => [s.key, []])),
+        submissions: Object.fromEntries(segments.map((s) => [s.key, {}])),
+        votes: Object.fromEntries(segments.map((s) => [s.key, {}])),
+        startedAt: new Date().toISOString(),
+        segmentStartedAt: new Date().toISOString(),
+        guideLog: [],
+        runtime,
+      };
+    }
     return {
       sessionId,
       stateVersion: 0,
@@ -157,11 +217,17 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   /** Session budget left = planned minutes of segments after the current
-   * one. Deliberately ignores overrun already incurred in past segments —
-   * PACER's extend/compress decision is about protecting what remains. */
+   * one, MINUS the overrun already incurred in completed segments and
+   * breaks. An extend decision must not quietly consume the next segment's
+   * time: the team-review finding (PACER ignoring cumulative overrun) is
+   * fixed here. In non-spine sessions (no runtime ledger) the budget is
+   * still forward-looking only — legacy behavior is unchanged. */
   private remainingBudgetMinutes(): number {
     const s = this.state!;
-    return s.segments.slice(s.currentSegmentIndex + 1).reduce((sum, seg) => sum + seg.plannedMinutes, 0);
+    const forward = s.segments.slice(s.currentSegmentIndex + 1).reduce((sum, seg) => sum + seg.plannedMinutes, 0);
+    if (!s.runtime) return forward;
+    const overrun = cumulativeOverrunMinutes(s.runtime, this.spinePlan ?? SPINE_REFERENCE_PLAN);
+    return Math.max(0, forward - overrun);
   }
 
   private buildGuideContext(segmentKey: string, submissionsOverride?: string[]): GuideContext {
@@ -280,6 +346,65 @@ export class SessionDO extends DurableObject<Env> {
     this.ctx.waitUntil(work);
   }
 
+  /** Route one instructor action through the pure runtime (build plan §5.4).
+   * On rejection the leader gets the concrete reason back over the socket —
+   * the console shows it verbatim. On success: runtime swap, index sync,
+   * segment-clock refresh on boundary crossings, guide speech published,
+   * then persist/broadcast/checkpoint (boundaries are high-value checkpoints,
+   * build plan §3.2). */
+  private async applySpineAction(action: SpineAction, ws: WebSocket, actionId?: string): Promise<void> {
+    const s = this.state!;
+    const rt = s.runtime;
+    const plan = this.spinePlan ?? SPINE_REFERENCE_PLAN;
+    if (!rt) {
+      this.sendTo(ws, { type: "error", message: "this session is not running the session spine" });
+      return;
+    }
+    const segment = s.segments[s.currentSegmentIndex];
+    const spec = specFor(segment);
+    const ctx: TransitionContext = {
+      now: Date.now(),
+      elapsedSegmentMinutes: this.currentElapsedMinutes(),
+      submissionCount: s.submissionCounts[segment.key] ?? 0,
+      voteCount: Object.keys(s.votes[segment.key] ?? {}).length,
+      minSubmissions: spec.min_submissions ?? 0,
+    };
+    const endedKey = segment.key;
+    const result = applyAction(plan, rt, action, ctx);
+    if (!result.ok) {
+      this.sendTo(ws, { type: "error", message: result.reason });
+      return;
+    }
+    s.runtime = result.runtime;
+    if (actionId) s.runtime.lastAppliedActionId = actionId;
+    s.currentSegmentIndex = result.runtime.currentSegmentIndex;
+    // stateVersion is the protocol's mutation counter — clients converge on
+    // it (pendingAdvance in the room screen) and the D1 checkpoint records
+    // it. Every applied spine action is a mutation and must bump it.
+    s.stateVersion += 1;
+    // Boundary crossings and session start refresh the segment clock and the
+    // per-segment guide bookkeeping — identical to the legacy advance path.
+    if (
+      action.type === "advance_segment" ||
+      action.type === "skip_segment" ||
+      action.type === "backtrack_segment" ||
+      action.type === "start_session" ||
+      action.type === "repeat_segment" ||
+      action.type === "end_break"
+    ) {
+      // Boundary crossings, session start, repeats, and break ends all start
+      // a fresh segment clock (re-entry gets a clean window, D7).
+      s.segmentStartedAt = new Date().toISOString();
+      this.lastEvaluatedCount = {};
+      this.lastPacerAction = undefined;
+    }
+    if (result.guideMessage) this.publishGuideMessage(result.guideMessage);
+    await this.persist();
+    this.broadcast();
+    await this.checkpointToD1(); // every instructor action is high-value state — build plan §3.2
+    if (action.type === "advance_segment") this.runBoundarySynthesis(endedKey);
+  }
+
   // ------------------------------------------------------------------
   // Connections & protocol
   // ------------------------------------------------------------------
@@ -363,6 +488,13 @@ export class SessionDO extends DurableObject<Env> {
           this.sendTo(ws, { type: "error", message: "only the shared screen can advance segments" });
           return;
         }
+        if (this.isSpine() && this.state?.runtime) {
+          // Spine mode: the same leader intent flows through the pure
+          // runtime so boundary events, output auto-audit, and the drift
+          // ledger stay authoritative.
+          await this.applySpineAction({ type: "advance_segment" }, ws);
+          return;
+        }
         const endedKey = this.state!.segments[this.state!.currentSegmentIndex].key;
         this.advanceSegment();
         await this.persist();
@@ -378,10 +510,62 @@ export class SessionDO extends DurableObject<Env> {
           this.sendTo(ws, { type: "error", message: "only the shared screen can backtrack segments" });
           return;
         }
+        if (this.isSpine() && this.state?.runtime) {
+          await this.applySpineAction({ type: "backtrack_segment" }, ws);
+          return;
+        }
         this.backtrackSegment();
         await this.persist();
         this.broadcast();
         await this.checkpointToD1(); // segment boundary — build plan §3.2
+        return;
+      }
+      case "spine_action": {
+        // Instructor actions (build plan §5.4). The shared screen is the
+        // leader's instrument — phones may not run leader actions on their
+        // own behalf (§5.5).
+        if (attachment.role !== "screen") {
+          this.sendTo(ws, { type: "error", message: "only the shared screen can run instructor actions" });
+          return;
+        }
+        if (!this.isSpine() || !this.state?.runtime) {
+          this.sendTo(ws, { type: "error", message: "this session is not running the session spine" });
+          return;
+        }
+        // One-shot dedupe across reconnect replays: the same actionId must
+        // never apply twice (a queued advance re-sent after a drop cannot be
+        // allowed to skip a segment the leader only pressed once).
+        const rt = this.state.runtime;
+        if (message.actionId && rt.lastAppliedActionId === message.actionId) {
+          // Already applied before the drop — ack with the current state so
+          // the console converges without re-executing.
+          this.sendTo(ws, { type: "state", state: this.state });
+          return;
+        }
+        await this.applySpineAction(message.action, ws, message.actionId);
+        return;
+      }
+      case "guide_feedback": {
+        // Participant correction of the Guide (build plan §2.1). Any role
+        // may send it; it lands as a parked issue + event — never a state
+        // mutation — so the correction mechanism cannot be an attack path.
+        const text = typeof message.text === "string" ? message.text.trim() : "";
+        if (!text) {
+          this.sendTo(ws, { type: "error", message: "feedback text is empty" });
+          return;
+        }
+        if (text.length > 500) {
+          this.sendTo(ws, { type: "error", message: "feedback text is over the 500-character limit" });
+          return;
+        }
+        if (!this.isSpine() || !this.state?.runtime) {
+          this.sendTo(ws, { type: "error", message: "this session is not running the session spine" });
+          return;
+        }
+        await this.applySpineAction(
+          { type: "park_issue", text, source: "participant", aboutMessageId: message.aboutMessageId },
+          ws,
+        );
         return;
       }
       case "leader_override": {
@@ -418,6 +602,7 @@ export class SessionDO extends DurableObject<Env> {
           return;
         }
         this.recordVote(message.segmentKey, message.voterUuid, message.optionId, message.logicalClock);
+        this.maybeAnnounceVoteQuorum(message.segmentKey);
         break;
       }
       default:
@@ -449,13 +634,75 @@ export class SessionDO extends DurableObject<Env> {
     await this.ready;
     await this.checkpointToD1();
     await this.runPacerIfDue();
+    if (this.isSpine() && this.state?.runtime && this.state.runtime.phase !== "complete") {
+      this.runSpineTick();
+    }
     await this.scheduleCheckpointAlarm();
+  }
+
+  /** The spine's deterministic voice: drift thresholds, break running long,
+   * closing pressure. Runs on the same 30s alarm as PACER; pure functions,
+   * so it needs no LLM and survives an outage. */
+  private runSpineTick(): void {
+    const s = this.state!;
+    const rt = s.runtime!;
+    if (rt.guideMode === "paused" || rt.phase === "setup") return;
+    const plan = this.spinePlan ?? SPINE_REFERENCE_PLAN;
+    const clock = computeClock(plan, rt, {
+      now: Date.now(),
+      segmentStartedAt: s.segmentStartedAt ?? s.startedAt,
+      currentSegmentIndex: s.currentSegmentIndex,
+    });
+    const segmentKey = s.segments[s.currentSegmentIndex]?.key ?? "";
+    const result = spineTick(rt, clock, segmentKey);
+    s.runtime = result.runtime;
+    for (const message of result.guideMessages) {
+      this.publishGuideMessage(message); // broadcasts; runtime rides the next persist
+    }
+    if (result.guideMessages.length > 0) {
+      void this.persist();
+    }
+  }
+
+  /** Vote-quorum announcement (team-review fix: vote_completed existed as an
+   * exit criterion but nothing surfaced it). Fires once per segment (L5). */
+  private maybeAnnounceVoteQuorum(segmentKey: string): void {
+    const s = this.state!;
+    const rt = s.runtime;
+    if (!rt || !this.isSpine()) return;
+    const voteCount = Object.keys(s.votes[segmentKey] ?? {}).length;
+    const connectedPhones = this.ctx.getWebSockets("phone").length;
+    if (voteQuorumReached(rt, segmentKey, voteCount, connectedPhones)) {
+      markVoteAnnounced(rt, segmentKey);
+      this.publishGuideMessage({
+        id: crypto.randomUUID(),
+        kind: "announcement",
+        segmentKey,
+        text: "Every connected participant has voted. The results are ready for the room whenever you want to see them.",
+        detail: "vote quorum reached",
+        createdAt: new Date().toISOString(),
+      });
+    }
   }
 
   private async runPacerIfDue(): Promise<void> {
     const llm = this.guideClient();
     if (!llm || this.guideWorkInFlight) return;
     const s = this.state!;
+    // Spine sessions: PACER speaks for segments, not for breaks, and stays
+    // silent when the leader has paused the Guide or taken over.
+    if (s.runtime && this.isSpine()) {
+      const rt = s.runtime;
+      if (
+        rt.phase === "break" ||
+        rt.phase === "setup" ||
+        rt.phase === "complete" ||
+        rt.phase === "recovery" ||
+        rt.guideMode === "paused"
+      ) {
+        return;
+      }
+    }
     const segmentKey = s.segments[s.currentSegmentIndex].key;
     try {
       const ctx = this.buildGuideContext(segmentKey);
@@ -591,7 +838,16 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   private broadcast(): void {
-    const message: ServerToClientMessage = { type: "state", state: this.state! };
+    // Presence is ephemeral room health (build plan §5.4 console view) —
+    // computed at broadcast time from the hibernation tags, never persisted.
+    const message: ServerToClientMessage & { presence?: { phones: number; screens: number } } = {
+      type: "state",
+      state: this.state!,
+      presence: {
+        phones: this.ctx.getWebSockets("phone").length,
+        screens: this.ctx.getWebSockets("screen").length,
+      },
+    };
     const payload = JSON.stringify(message);
     for (const ws of this.ctx.getWebSockets()) {
       ws.send(payload);

@@ -28,6 +28,14 @@ The entire client UI is real: Vite/React PWA with shared-screen lab, phone clien
 
 **What is still not an MVP**: no *real* curriculum exists (`content/packs/church/` is intentionally empty) — but a rich synthetic **`content/packs/_demo/` reference pack** (9 segments, ~5h15m, build-plan §7 arc) now powers test labs/rehearsals via the new `specFor()` seam, replacing the old 7-minute fake lab; the literal human gates (physical devices, leader edit count, real iOS/Android install) are unrun; and the "Groundwork" name still carries trademark collision risk. Do not call this customer-ready until those are closed.
 
+**What changed in this session (2026-08-28, later) — session spine, console, phone identity (build-plan Releases 0–2 core):**
+- **Canonical session spine shipped**: `src/session-plan.ts` (SessionPlan/SegmentPlan/Break/Breakout/Closing schemas + the six-hour reference itinerary, 315+45=360 min, §7-exact) and `src/session-runtime.ts` (pure deterministic state machine, SessionClock with instant drift arithmetic, protected break minimums with recorded overrides, output audit with a closing gate that blocks silent completion, event log, leader-decided recommendation queue). Wired into `SessionDO` behind `SESSION_SPINE`; legacy sessions byte-for-byte unchanged (session-integration + phase1 suites green).
+- **Instructor console live at `/console/:key`**: clock ribbon with drift, sponsor controls (pause/Esc, take the floor, break start/extend/end with protected-minimum enforcement, breakout start/end, two-step emergency stop), recommendation queue with recorded accept/edit/dismiss/defer, itinerary with break/breakout state, output audit with leader marks, room health from broadcast presence, full event/override history.
+- **Phone identity + correction (R1)**: AI-instructor contract card before work begins, persistent AI-led chip, and a "correct the Guide" affordance under every probe — corrections land on the console as parked issues, never mutations.
+- **Two team-review findings fixed**: vote quorum now announced to the room (was declared, never surfaced); PACER's remaining budget now subtracts cumulative overrun so an extend can't silently eat the next segment.
+- **New gates**: `test:session-plan` 12, `test:session-runtime` 19, `test:six-hour-simulation` 11 (drift ladder 15/30/60, buffer protection, restart resume, 6 degraded scenarios), `test:spine-integration` 22 against a live wrangler dev (incl. DO eviction + runtime restore). All green; CI extended (phase-1 + phase-2 jobs).
+- **Not yet**: `SESSION_SPINE` not enabled in production (Jeremy's go/no-go); breakout group assignment + report-back collection (R4); Playwright console-operability and phone-identity runs (R1/R3 exit gates); the other 8 degraded scenarios (R5).
+
 ---
 
 ## Active Metrics

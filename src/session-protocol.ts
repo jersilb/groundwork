@@ -1,6 +1,8 @@
 // WebSocket protocol between clients and SessionDO. Node contract: explicit
 // input/output shapes, no free-text — per docs/agent-team.md's topology rules.
 
+import type { SpineAction } from "./session-runtime.ts";
+
 export type ClientRole = "screen" | "phone";
 
 export interface SegmentDef {
@@ -59,6 +61,10 @@ export interface SessionState {
   /** Guide Engine messages addressed to the room, oldest last, capped.
    * Rides the normal state broadcast so rejoins see full history. */
   guideLog?: GuideMessage[];
+  /** Session-spine runtime (build plan §5.2) — present only in sessions
+   * opened with SESSION_SPINE=true. All optional fields are backfilled on
+   * restore by normalizeState, so pre-spine checkpoints load unchanged. */
+  runtime?: import("./session-runtime.ts").SpineRuntime;
 }
 
 /** Protocol input limits. Rooms are 6-12 people; these caps exist to stop a
@@ -76,7 +82,7 @@ export const MAX_GUIDE_LOG_ENTRIES = 25;
  * and SYNTHESIZER (segment-boundary draft summaries). Guide messages ride
  * inside the normal state broadcast as `guideLog` so a rejoining client
  * sees the full history — no separate replay transport needed. */
-export type GuideMessageKind = "pacer" | "probe" | "synthesis" | "evaluator";
+export type GuideMessageKind = "pacer" | "probe" | "synthesis" | "evaluator" | "announcement" | "time_check" | "intervention";
 
 export interface GuideMessage {
   id: string;
@@ -103,7 +109,16 @@ export type ClientToServerMessage =
   | { type: "backtrack_segment" }
   | { type: "submit"; segmentKey: string; clientUuid: string; content: string }
   | { type: "vote"; segmentKey: string; voterUuid: string; optionId: string; logicalClock: number }
-  | { type: "leader_override"; override: LeaderOverride };
+  | { type: "leader_override"; override: LeaderOverride }
+  /** Session-spine instructor action (build plan §5.4). Screen role only —
+   * the shared screen is the leader's instrument (§5.5). The action is a
+   * fully typed SpineAction; the DO routes it through the pure runtime.
+   * `actionId` dedupes one-shot actions across reconnect replays: a queued
+   * advance re-sent after a drop must never double-advance. */
+  | { type: "spine_action"; action: SpineAction; actionId?: string }
+  /** Participant correction of the Guide (build plan §2.1). Phones may send
+   * this; the DO records it as a parked issue + event — never a mutation. */
+  | { type: "guide_feedback"; aboutMessageId?: string; text: string };
 
 // Every server response is either a full `state` broadcast — all mutations
 // fan out the complete SessionState, so a rejoining client receives

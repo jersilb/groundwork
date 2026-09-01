@@ -18,3 +18,7 @@ Append-only. A lesson nobody is told to read protects nobody — briefs cite the
 - **L6 (2026-08-28, verification)**: an exit criterion the Guide can observe must stay automatable
   (`min_submissions_met`); human judgments (`leader_confirmed`, `candor_check_passed`) are the
   leader's act of advancing, not the Guide's inference. New output-audit gates follow the same split.
+- **L7 (2026-08-28, session-integration)**: the "completed lab cannot be reopened" check can
+  flake once with a 500 when the route's D1 write races the DO's 30s checkpoint on local
+  SQLite (miniflare lock). Retry the suite once before diagnosing a regression — a persistent
+  failure is real, a one-off is the lock.

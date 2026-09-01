@@ -174,3 +174,44 @@ console mockup is the first design deliverable, gated on the existing theme toke
 **Consequences**: `specFor()` seam (the better-feature fix); `_demo` pack runs a
 5h15m rehearsal instead of the 7-minute fake lab; flagged-but-deferred: BreakSpec/
 BreakoutSpec (Release-2) and observable `vote_completed` for the leader (M4).
+
+## 2026-08-28 — Session spine shipped (Releases 0–2 core + console + phone identity)
+
+1. **Canonical plan schemas + reference itinerary** (`src/session-plan.ts`): SessionPlan /
+   SegmentPlan / BreakSpec / BreakoutSpec / ClosingSpec with cross-reference validation
+   (unique keys, anchor existence, no double anchors, exact plan-total match, closing buffer
+   fits the final segment). BreakSpec and BreakoutSpec both anchor to segment keys, and a
+   breakout is the small-group delivery mode INSIDE its segment's window — this keeps the
+   315-minute demo pack + three 15-minute breaks = exactly 360 minutes, one-to-one with the
+   build plan §7 itinerary.
+2. **Pure runtime** (`src/session-runtime.ts`): typed SpineActions, deterministic state machine
+   (setup→active→break→breakout→closing→complete with reentry transient), SessionClock with
+   instant-by-instant drift arithmetic (planned consumed = completed planned + min(current
+   elapsed, current planned)), break lifecycle with protected minimums (forced early end is a
+   recorded override), output audit with auto rules (statement = submission floor, ranking =
+   ≥2 votes, owners/actions/cadence = leader mark) and a closing gate that blocks silent
+   completion, capped event log, recommendation queue with leader-only decisions.
+3. **DO wiring behind `SESSION_SPINE`** (env flag; [vars] not yet set in prod until Jeremy
+   approves): spine sessions run the reference plan; legacy sessions unchanged. Instructor
+   actions arrive as one `spine_action` message (screen-gated), deduped by `actionId` so a
+   reconnect replay can never double-advance. Participant corrections arrive as
+   `guide_feedback` and land as parked issues + events — never mutations.
+4. **Vote quorum surfaced** (team-review fix): when every connected phone has voted, the room
+   hears it once (L5 dedupe per segment).
+5. **PACER budget fix** (team-review fix): remaining budget now subtracts cumulative overrun of
+   completed segments and breaks, so an extend decision can no longer silently consume the next
+   segment's time.
+6. **Instructor console** (`/console/:key`, React, planning-room design system): clock ribbon
+   with drift, sponsor controls with Esc-pause and two-step emergency stop, recommendation
+   queue (accept/edit/dismiss/defer with recorded decisions), itinerary with break/breakout
+   state, Guide's voice with why-lines, output audit with leader mark buttons, room health from
+   broadcast presence, full event/override history. Screen-token auth inherited; console link
+   added on the leader's room screen.
+7. **Phone identity + correction** (build plan §6 R1): AI-instructor contract card on the
+   welcome segment, persistent AI-led chip, and a "correct the Guide" affordance under every
+   probe (only on spine sessions — no silent no-ops on legacy rooms).
+8. **Verification added**: `test:session-plan` (12), `test:session-runtime` (19),
+   `test:six-hour-simulation` (11: drift 15/30/60 ladder, buffer protection, restart resume,
+   6 degraded scenarios), and `test:spine-integration` (22 live-protocol checks against a real
+   wrangler dev, incl. DO eviction + runtime restore). Legacy regression suites unchanged and
+   green. CI phase-2 and phase-1 jobs extended.

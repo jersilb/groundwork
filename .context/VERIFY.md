@@ -26,12 +26,14 @@ node scripts/test-phase3-resilience.mjs
 
 | Gate | Check | Status |
 |---|---|---|
-| Itinerary schema | `node --experimental-strip-types scripts/test-session-plan.ts` — compiles a reference six-hour plan, rejects 8 malformed fixtures (missing output, impossible timing, no report-back, overlapping break, unknown input mode, negative minutes, duplicate segment keys, unclosed plan) | planned R0 |
-| Six-hour simulation | `node scripts/test-six-hour-simulation.mjs` — deterministic scripted run; asserts break count, drift detection at 15/30/60 min, closing-buffer protection, resume-after-restart, blocked silent completion | planned R2 |
-| Console operability | Playwright: instructor completes a full simulated session via UI only; every recommendation exposes accept/edit/dismiss; overrides logged | planned R3 |
-| Breakout E2E | 6–12 phone clients, group packets, report-back, conflict preservation, instructor canonical-accept | planned R4 |
-| Identity/consent | Playwright: fresh participant sees Guide identity + contract + correction affordance before any prompt | planned R1 |
-| Degraded rehearsal | 14-scenario harness — every scenario ends in a documented deterministic recovery | planned R5 |
+| Itinerary schema | `npm run test:session-plan` — compiles the reference six-hour plan, rejects 11 malformed fixture classes (missing output, impossible timing, no report-back, overlapping break, unknown input mode, negative minutes, duplicate segment keys, unclosed plan, oversized buffer, ghost anchors, garbage) | **shipped R0 (2026-08-28) — 12 checks green** |
+| Session runtime | `npm run test:session-runtime` — transition legality, protected break minimums + forced-override recording, drift arithmetic, closing gate, event cap, recommendation lifecycle, JSON round-trip | **shipped R0/R2 (2026-08-28) — 19 checks green** |
+| Six-hour simulation | `npm run test:six-hour-simulation` — deterministic scripted run; asserts break count, drift ladder 15/30/60 once each, closing-buffer protection, resume-after-restart, blocked silent completion, degraded paths (LLM outage, skip, break extension, forced end, participant correction) | **shipped R2 (2026-08-28) — 11 checks green** |
+| Spine integration | `npm run test:spine-integration` — live wrangler dev with SESSION_SPINE=true: full protocol walk (start/break/extend/forced-end/breakout/human-led/phone-gate/correction/closing gate/force-close) + DO eviction with runtime restore | **shipped R0/R2 (2026-08-28) — 22 checks green** |
+| Console operability | Playwright: instructor completes a full simulated session via UI only; every recommendation exposes accept/edit/dismiss; overrides logged | planned R3 (UI shipped 2026-08-28; Playwright run pending) |
+| Breakout E2E | 6–12 phone clients, group packets, report-back, conflict preservation, instructor canonical-accept | planned R4 (breakout phase + packets shipped in the runtime; group assignment pending) |
+| Identity/consent | Playwright: fresh participant sees Guide identity + contract + correction affordance before any prompt | planned R1 (UI shipped 2026-08-28; Playwright run pending) |
+| Degraded rehearsal | 14-scenario harness — every scenario ends in a documented deterministic recovery | partial: 6 scenarios covered in the six-hour simulation; remaining 8 planned R5 |
 
 ## Level 4 — Review gates (human or clean-context agent)
 

@@ -141,3 +141,22 @@ Context collapse → reducer fan-in · False independence → schemas are a real
 Silent node failure → expected-vs-actual counting · Self-grading → clean-context verify ·
 Memory drift → `.context/` rewrite per phase · Cost explosion → tier scoring per brief,
 3–4 concurrent hands max, token spend logged per phase.
+
+## 6. Wave-1 execution status (2026-08-28, fallback director execution)
+
+All four Wave-1 briefs executed in this session under the fallback rule (D5 — no subagent
+spawner in-session; the director executed each specialist's brief sequentially):
+
+| Brief | Owner role | Delivered | Gate |
+|---|---|---|---|
+| W1-a session spine (schemas + reference plan) | session-orchestrator-engineer | `src/session-plan.ts` + `SPINE_REFERENCE_PLAN` | `test:session-plan` 12/12 |
+| W1-b runtime (state machine, clock, break lifecycle, audit, events) | session-orchestrator-engineer | `src/session-runtime.ts` (pure) | `test:session-runtime` 19/19 |
+| W1-c DO wiring behind `SESSION_SPINE` + vote quorum + PACER overrun fix | session-orchestrator-engineer | `src/session-do.ts`, protocol extension | `test:spine-integration` 22/22 live |
+| W2 six-hour simulation harness | reliability-rehearsal-engineer | `scripts/test-six-hour-simulation.ts` | 11/11 (drift ladder, buffer, restart, 6 degraded scenarios) |
+| W3 instructor console | instructor-ux-designer | `web/src/features/console/InstructorConsole.tsx` at `/console/:key` | typecheck + build; Playwright operability run pending (R3 exit) |
+| W4 phone identity + correction | instructor-runtime-engineer | `GuideIntroCard`, `GuideCorrection`, `guide_feedback` protocol | typecheck; Playwright identity run pending (R1 exit) |
+
+Remaining for later waves: group assignment + report-back collection (R4), Playwright
+operability/identity runs, the other 8 degraded scenarios (R5), voice (R6), memory (R7),
+adaptive facilitation (R8). `SESSION_SPINE` is not yet set in production [vars] — Jeremy's
+go/no-go before enabling on real rooms.

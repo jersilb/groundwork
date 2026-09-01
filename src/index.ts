@@ -1,4 +1,5 @@
 import type { SessionDO } from "./session-do.ts";
+import { SPINE_REFERENCE_PLAN } from "./session-plan.ts";
 import { handleAudioRoute } from "./audio/routes.ts";
 import { transcribeAudioChunk } from "./audio/transcribe.ts";
 import { handleSynthesisRoute } from "./synthesis/routes.ts";
@@ -34,6 +35,11 @@ export interface Env {
    * exists — local tests set this in .dev.vars so no suite depends on a
    * live LLM. Production sets GUIDE_ENABLED="true" via [vars]. */
   GUIDE_ENABLED?: string;
+  /** Session-spine switch (build plan §5.2/§6 Release 0). "true" opens new
+   * sessions on the six-hour reference plan with the full runtime (state
+   * machine, clock, breaks, breakouts, output audit, event log). Unset or
+   * any other value keeps the legacy lab behavior unchanged. */
+  SESSION_SPINE?: string;
   /** Built frontend (dist/ via the [assets] binding) — served on GETs
    * that no API/WebSocket route matched, with an SPA fallback. */
   ASSETS?: Fetcher;
@@ -58,6 +64,13 @@ export default {
 
     if (url.pathname === "/health") {
       return Response.json({ status: "ok", phase: 7 });
+    }
+
+    // The session-spine reference plan (build plan §7) as data. It is a
+    // synthetic technical fixture — safe to serve unauthenticated; real
+    // curriculum stays behind the IP firewall and is never served here.
+    if (url.pathname === "/session-plans/reference" && request.method === "GET") {
+      return Response.json(SPINE_REFERENCE_PLAN, { headers: { "cache-control": "public, max-age=3600" } });
     }
 
     // Authenticate all non-GET, non-OPTIONS API requests before routing.

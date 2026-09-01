@@ -1,4 +1,4 @@
-import type { ClientRole, ClientToServerMessage, ServerToClientMessage, SessionState } from "./types";
+import type { ClientRole, ClientToServerMessage, RoomPresence, ServerToClientMessage, SessionState } from "./types";
 import {
   enqueue as enqueueDurable,
   getPending as getDurablePending,
@@ -68,6 +68,8 @@ export class SessionSocket {
   private closedByUser = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   state: SessionState | null = null;
+  /** Ephemeral room health from the latest broadcast (never persisted). */
+  presence: RoomPresence | null = null;
 
   constructor(
     sessionKey: string,
@@ -110,6 +112,7 @@ export class SessionSocket {
         const msg = JSON.parse(String(event.data)) as ServerToClientMessage;
         if (msg.type === "state") {
           this.state = msg.state;
+          this.presence = msg.presence ?? null;
           this.handlers.onState?.(msg.state);
           if (this.durableOutbox) void this.reconcileDurableQueue(msg.state);
         } else if (msg.type === "error") {

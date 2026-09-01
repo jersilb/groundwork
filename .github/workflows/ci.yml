@@ -64,6 +64,8 @@ jobs:
         run: npx wrangler d1 migrations apply groundwork --local
       - name: Run the reconnect/replay + leader + lab-wiring test
         run: node scripts/test-session-integration.mjs
+      - name: Session-spine integration smoke (SESSION_SPINE=true, full protocol walk)
+        run: node scripts/test-spine-integration.mjs
 
   phase2-guide-engine:
     name: Phase 2 gate — PACER/EVALUATOR/PROBER + segment spec compiler
@@ -82,6 +84,12 @@ jobs:
         run: npm run test:guide-runtime
       - name: Demo reference pack rehearsal (six-hour arc resolves + paces correctly)
         run: npm run test:demo-pack
+      - name: SessionPlan schema gate (reference plan compiles, malformed plans rejected)
+        run: npm run test:session-plan
+      - name: Session runtime gate (state machine, clock, break protections, closing gate)
+        run: npm run test:session-runtime
+      - name: Six-hour deterministic simulation (drift 15/30/60, buffer protection, restart resume)
+        run: npm run test:six-hour-simulation
       - name: EVALUATOR/PROBER parsing and validation tests
         run: npm run test:evaluator-prober-parsing
       - name: Eval harness (self-test mode — no ANTHROPIC_API_KEY in CI yet)

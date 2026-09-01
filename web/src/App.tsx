@@ -8,6 +8,7 @@ import PhoneClient from "./features/room/PhoneClient";
 import Dashboard from "./features/org/Dashboard";
 import Billing from "./features/org/Billing";
 import InstallHelp from "./features/install/InstallHelp";
+import InstructorConsole from "./features/console/InstructorConsole";
 
 /**
  * Application shell. Feature screens live under web/src/features/ and are
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/install" element={<InstallHelp />} />
         <Route path="/session/:key" element={<RoomScreen />} />
         <Route path="/session/:key/phone" element={<PhoneClient />} />
+        <Route path="/console/:key" element={<InstructorConsole />} />
         <Route path="/org/:orgId" element={<Dashboard />} />
         <Route path="/org/:orgId/billing" element={<Billing />} />
         <Route path="*" element={<NotFound />} />
