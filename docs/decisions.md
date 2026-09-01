@@ -215,3 +215,12 @@ BreakoutSpec (Release-2) and observable `vote_completed` for the leader (M4).
    6 degraded scenarios), and `test:spine-integration` (22 live-protocol checks against a real
    wrangler dev, incl. DO eviction + runtime restore). Legacy regression suites unchanged and
    green. CI phase-2 and phase-1 jobs extended.
+
+## 2026-08-31 — Session spine, instructor console, phone Guide shipped (a216f37)
+- Implemented build-plan §5/§6: SessionPlan schema + pure runtime (state machine, clock with drift, break lifecycle with clock freeze, output audit, event log) in `src/session-plan.ts` / `src/session-runtime.ts`.
+- Wired the spine into the SessionDO behind `SESSION_SPINE` with server-side action-id dedupe (replay double-advance attack closed) and `stateVersion` bumps on every spine mutation (client convergence + D1 checkpoints depend on it).
+- Shipped the React instructor console (`/console/:sessionKey`) from the approved mockup design: clock ribbon, sponsor controls, Guide recommendations with Accept/Edit/Dismiss, itinerary health flags, room presence.
+- Shipped the phone Guide identity card + operating contract and the correction affordance (spine sessions only — the server actually records corrections there).
+- Break semantics decided: a break anchors to the boundary AFTER a completed segment; the next segment's clock does not run during the break; planned consumed = completed planned + min(current elapsed, current planned).
+- New permanent gates: `test:session-plan` (12), `test:session-runtime` (19), `test:six-hour-simulation` (11, injected clock + degraded scenarios), `test:spine-integration` (22 against real wrangler dev) — all wired into CI.
+- Verified: typecheck, guide-runtime 9/9, pacer 6/6, demo-pack 24/24, vocab lint clean, build:web green. Deployed to groundwork.jersilb.workers.dev (root 200, session route 200).
