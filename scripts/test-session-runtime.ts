@@ -18,6 +18,7 @@ import {
   type SpineRuntime,
   type TransitionContext,
   enqueueGuideRecommendation,
+  recommendationDisplayText,
 } from "../src/session-runtime.ts";
 
 let checks = 0;
@@ -444,6 +445,61 @@ check("enqueueGuideRecommendation bridges probe/evaluator/pacer/synthesis to con
   });
   assert.equal(dup, null);
   assert.equal(rt.recommendations.filter((r) => r.status === "pending").length, 4);
+});
+
+
+check("recommendationDisplayText uses action.reason for request_human_intervention", () => {
+  const rt = startedRuntime();
+  const evaluator = enqueueGuideRecommendation(rt, {
+    id: "gm-eval-display",
+    kind: "evaluator",
+    text: "There's unresolved disagreement in the room on this question.",
+    detail: "verdict: stuck",
+    segmentKey: "s2-current-reality",
+    createdAt: new Date(T0).toISOString(),
+  });
+  assert.ok(evaluator);
+  assert.equal(
+    recommendationDisplayText(evaluator!),
+    "There's unresolved disagreement in the room on this question.",
+    "display text must be action.reason (message text), not the meta why-line",
+  );
+  assert.notEqual(recommendationDisplayText(evaluator!), evaluator!.reason);
+});
+
+check("LLM pacer time_check carries minutesRemaining from GuideMessage", () => {
+  const rt = startedRuntime();
+  const pacer = enqueueGuideRecommendation(rt, {
+    id: "gm-pacer-mins",
+    kind: "pacer",
+    text: "We are past the planned time for this segment.",
+    minutesRemaining: 42,
+    segmentKey: "s2-current-reality",
+    createdAt: new Date(T0).toISOString(),
+  });
+  assert.ok(pacer && pacer.action.type === "time_check");
+  if (pacer!.action.type === "time_check") {
+    assert.equal(pacer!.action.minutesRemaining, 42);
+  }
+});
+
+check("LLM pacer skips enqueue when a pending spineTick time_check already exists", () => {
+  const rt = startedRuntime();
+  rt.recommendations.push({
+    id: "spine-tc-1",
+    action: { type: "time_check", minutesRemaining: 30, text: "We are behind; compress next." },
+    reason: "schedule drift reached 15 minutes",
+    status: "pending",
+  });
+  const pacer = enqueueGuideRecommendation(rt, {
+    id: "gm-pacer-dup-window",
+    kind: "pacer",
+    text: "Different LLM pacing copy for the same alarm window.",
+    minutesRemaining: 30,
+    segmentKey: "s2-current-reality",
+    createdAt: new Date(T0).toISOString(),
+  });
+  assert.equal(pacer, null, "dual-queue guard must prefer existing pending time_check");
 });
 
 console.log(`\nPASS — ${checks} runtime checks green.`);

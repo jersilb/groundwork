@@ -24,22 +24,33 @@ export function normalizeSegmentKey(key: string): string {
   return key.replace(/_/g, "-");
 }
 
+/**
+ * Stem renames that underscore↔hyphen normalization cannot recover.
+ * Historical demo fixtures used `s9_commitments_close`; the spine key is
+ * `s9-closeout`. Lookups resolve either form to the closeout demo spec.
+ */
+export const LEGACY_SEGMENT_KEY_ALIASES: Readonly<Record<string, string>> = {
+  "s9_commitments_close": "s9-closeout",
+  "s9-commitments-close": "s9-closeout",
+};
+
+/** Resolve a caller key through stem aliases, then underscore↔hyphen. */
+export function resolveSegmentKeyAlias(key: string): string {
+  return LEGACY_SEGMENT_KEY_ALIASES[key] ?? LEGACY_SEGMENT_KEY_ALIASES[normalizeSegmentKey(key)] ?? key;
+}
+
 const DEMO_BY_KEY = new Map<string, (typeof DEMO_SEGMENT_SPECS)[number]>();
 for (const spec of DEMO_SEGMENT_SPECS) {
   DEMO_BY_KEY.set(spec.key, spec);
   DEMO_BY_KEY.set(normalizeSegmentKey(spec.key), spec);
   DEMO_BY_KEY.set(spec.key.replace(/-/g, "_"), spec);
 }
-// Semantic renames (not underscore↔hyphen): old demo key → current spine key.
-const LEGACY_DEMO_KEY_ALIASES: Record<string, string> = {
-  "s9_commitments_close": "s9-closeout",
-  "s9-commitments-close": "s9-closeout",
-};
-for (const [legacy, canonical] of Object.entries(LEGACY_DEMO_KEY_ALIASES)) {
-  const spec = DEMO_BY_KEY.get(canonical);
-  if (spec) {
-    DEMO_BY_KEY.set(legacy, spec);
-    DEMO_BY_KEY.set(normalizeSegmentKey(legacy), spec);
+// Index legacy stems onto the canonical demo specs they renamed into.
+for (const [legacy, canonical] of Object.entries(LEGACY_SEGMENT_KEY_ALIASES)) {
+  const target = DEMO_BY_KEY.get(canonical) ?? DEMO_BY_KEY.get(normalizeSegmentKey(canonical));
+  if (target) {
+    DEMO_BY_KEY.set(legacy, target);
+    DEMO_BY_KEY.set(normalizeSegmentKey(legacy), target);
   }
 }
 
@@ -88,10 +99,13 @@ export function specFor(segment: SegmentDef, liveFallbackSpecs?: SegmentSpec[]):
     liveFallbackSpecs?.find((s) => s.key === segment.key) ??
     liveFallbackSpecs?.find((s) => normalizeSegmentKey(s.key) === normalizeSegmentKey(segment.key));
   if (liveSpec) return liveSpec;
+  const aliased = resolveSegmentKeyAlias(segment.key);
   const demoSpec =
     DEMO_BY_KEY.get(segment.key) ??
     DEMO_BY_KEY.get(normalizeSegmentKey(segment.key)) ??
-    DEMO_BY_KEY.get(segment.key.replace(/-/g, "_"));
+    DEMO_BY_KEY.get(segment.key.replace(/-/g, "_")) ??
+    DEMO_BY_KEY.get(aliased) ??
+    DEMO_BY_KEY.get(normalizeSegmentKey(aliased));
   if (demoSpec) {
     // Return a copy keyed to the caller's segment key so downstream consumers
     // (DO submission maps, PACER) stay consistent with the live session key.
@@ -214,8 +228,10 @@ export async function runPacerTick(
     decision.action === "advance"
       ? `${Math.round((ctx.elapsedSegmentMin / spec.planned_minutes) * 100)}% of planned time used`
       : decision.rationale;
+  const message = makeGuideMessage("pacer", text, ctx.segment.key, detail);
+  message.minutesRemaining = Math.max(0, Math.round(ctx.remainingSessionBudgetMin));
   return {
-    message: makeGuideMessage("pacer", text, ctx.segment.key, detail),
+    message,
     action: decision.action,
   };
 }

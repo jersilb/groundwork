@@ -819,10 +819,20 @@ export function enqueueGuideRecommendation(
   const action = guideMessageToConsoleAction(message);
   if (!action) return null;
 
+  // Dual-queue guard: spineTick and LLM PACER share the 30s alarm. When a
+  // deterministic time_check is already pending, skip the LLM pacer row so
+  // the console does not show two pacing cards for the same tick window.
+  if (
+    message.kind === "pacer" &&
+    rt.recommendations.some((r) => r.status === "pending" && r.action.type === "time_check")
+  ) {
+    return null;
+  }
+
   const already = rt.recommendations.some(
     (r) =>
       r.id === message.id ||
-      (r.status === "pending" && recommendationText(r) === message.text),
+      (r.status === "pending" && recommendationDisplayText(r) === message.text),
   );
   if (already) return null;
 
@@ -847,7 +857,11 @@ export function enqueueGuideRecommendation(
   return rec;
 }
 
-export function recommendationText(rec: RecommendationEntry): string {
+/** Console / tests: surface copy for a recommendation action.
+ * request_human_intervention (and pause / recommend_recovery) put the
+ * room-facing text on `action.reason`, not a `text` field — callers must
+ * not fall through to the meta `rec.reason` why-line. */
+export function recommendationDisplayText(rec: RecommendationEntry): string {
   const a = rec.action;
   if ("text" in a && typeof a.text === "string") return a.text;
   if (a.type === "request_human_intervention") return a.reason;
@@ -855,6 +869,9 @@ export function recommendationText(rec: RecommendationEntry): string {
   if (a.type === "pause") return a.reason;
   return rec.reason;
 }
+
+/** @deprecated Prefer recommendationDisplayText (same implementation). */
+export const recommendationText = recommendationDisplayText;
 
 /** Map LLM guideLog kinds onto GuideAction shapes the console already renders. */
 function guideMessageToConsoleAction(message: GuideMessage): GuideAction | null {
@@ -864,9 +881,15 @@ function guideMessageToConsoleAction(message: GuideMessage): GuideAction | null 
     case "evaluator":
       return { type: "request_human_intervention", reason: message.text };
     case "pacer":
-      // minutesRemaining is unused by the console today; -1 = unknown (LLM pacer
-      // has no SessionClock here). Avoid advertising a false "0 minutes left".
-      return { type: "time_check", minutesRemaining: -1, text: message.text };
+      // Prefer PACER-supplied remaining budget; fall back to -1 (unknown) so we
+      // never advertise a false "0 minutes left" when the field was omitted.
+      return {
+        type: "time_check",
+        minutesRemaining: message.minutesRemaining != null
+          ? Math.max(0, Math.round(message.minutesRemaining))
+          : -1,
+        text: message.text,
+      };
     case "synthesis":
       return { type: "summarize", text: message.text, provenance: message.detail ? [message.detail] : [] };
     case "intervention":

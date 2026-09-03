@@ -91,6 +91,9 @@ export interface GuideMessage {
   text: string;
   /** Machine context: why the guide said this (verdict, overrun %, ...). */
   detail?: string;
+  /** Session minutes remaining — set by PACER so console time_check bridging
+   * is not stuck at a placeholder 0. */
+  minutesRemaining?: number;
   segmentKey: string;
   createdAt: string;
 }

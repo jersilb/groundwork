@@ -9,7 +9,7 @@
 // No network, no API key, no LLM — the fakes are the contract, exactly like
 // the other guide test scripts.
 import assert from "node:assert/strict";
-import { specFor, normalizeSegmentKey, computeExitCriteria } from "../src/guide-engine/session-guide.ts";
+import { specFor, computeExitCriteria, resolveSegmentKeyAlias } from "../src/guide-engine/session-guide.ts";
 import { decidePacerAction } from "../src/guide-engine/pacer.ts";
 import { DEMO_SEGMENT_SPECS } from "../src/generated/demo-segment-specs.ts";
 import { SEGMENT_SPECS } from "../src/generated/segment-specs.ts";
@@ -76,10 +76,17 @@ check("specFor still resolves legacy underscore keys via alias (no generic fallb
   assert.ok(reality.rubric.some((r) => r.id === "specific_current_state"), "underscore alias must not hit generic rubric");
 });
 
-check("specFor resolves legacy s9_commitments_close to closeout demo (semantic rename)", () => {
-  const close = specFor({ key: "s9_commitments_close", title: "Commitments & close", plannedMinutes: 15 });
-  assert.ok(!close.rubric.some((r) => r.id === "specific"), "legacy s9 key must not hit generic rubric");
-  assert.equal(normalizeSegmentKey("s9_commitments_close") === "s9-commitments-close", true);
+check("legacy s9_commitments_close stem aliases to s9-closeout demo rubric", () => {
+  assert.equal(resolveSegmentKeyAlias("s9_commitments_close"), "s9-closeout");
+  assert.equal(resolveSegmentKeyAlias("s9-commitments-close"), "s9-closeout");
+  const legacy = specFor({ key: "s9_commitments_close", title: "Close", plannedMinutes: 30 });
+  const canonical = specFor({ key: "s9-closeout", title: "Close", plannedMinutes: 30 });
+  assert.ok(!legacy.rubric.some((r) => r.id === "specific"), "legacy stem must not hit generic rubric");
+  assert.deepEqual(
+    legacy.rubric.map((r) => r.id),
+    canonical.rubric.map((r) => r.id),
+    "legacy stem must resolve the same demo rubric as s9-closeout",
+  );
 });
 
 check("spine reference keys all resolve to demo specs (not generic)", () => {

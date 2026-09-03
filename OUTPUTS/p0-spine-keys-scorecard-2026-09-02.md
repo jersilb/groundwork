@@ -45,10 +45,13 @@
 
 | # | Item | Status |
 |---|------|--------|
-| A | Console RecommendationCard shows `action.reason` for intervention (not evidence `rec.reason`) | **FIXED** |
+| A | Console RecommendationCard shows `action.reason` for intervention + edit-draft seeding | **FIXED** |
 | B | `publishGuideMessage` persists after LLM enqueue (hibernate-safe) | **FIXED** |
-| C | Legacy `s9_commitments_close` → `s9-closeout` demo alias + test | **FIXED** |
-| D | LLM pacer `minutesRemaining` no longer hardcodes `0` (uses `-1` unknown) | **FIXED** |
-| E | Accept remains decision-log only (D2) — not auto-apply | **DOCUMENTED** (intentional) |
-| F | Stripe apiVersion typecheck + wrangler-dev health CI | **RESIDUAL** (pre-existing on base) |
-| G | `SESSION_SPINE` | **still unset** (correct) |
+| C | Legacy `s9_commitments_close` → `s9-closeout` stem alias + test | **FIXED** |
+| D | LLM pacer `minutesRemaining` from PACER budget (fallback `-1` unknown) | **FIXED** |
+| E | Accept remains decision-log only; publish-edited-to-room deferred (D2) | **DOCUMENTED** |
+| F | Dual-queue: skip LLM pacer when pending spineTick `time_check` | **FIXED** |
+| G | Stripe apiVersion typecheck + wrangler-dev health CI | **RESIDUAL** (pre-existing on base) |
+| H | `SESSION_SPINE` | **still unset** (correct) |
+
+Verify: test-session-runtime 23/23, test-demo-pack 28/28, session-plan 12, guide-runtime 9, pacer 6, six-hour 11, evaluator-prober 7.

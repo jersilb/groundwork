@@ -481,7 +481,9 @@ function SponsorControls({
 }
 
 
-/** Prefer action payload text over recommendation.reason (which holds guide detail/evidence). */
+/** Display text for a recommendation — mirrors session-runtime.recommendationDisplayText.
+ * request_human_intervention / recommend_recovery / pause carry copy on action.reason,
+ * not a `text` field and not the meta `rec.reason` (why-line). */
 function recommendationDisplayText(rec: RecommendationEntry): string {
   const a = rec.action;
   if ("text" in a && typeof a.text === "string") return a.text;

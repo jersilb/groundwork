@@ -265,7 +265,7 @@ export class SessionDO extends DurableObject<Env> {
     }
     s.stateVersion += 1;
     this.broadcast();
-    // Persist guideLog + any bridged recommendations. evaluate/pacer/synthesis
+    // Persist guideLog + any bridged recommendations. LLM evaluate/pacer/synthesis
     // previously broadcast-only; DO hibernation dropped LLM→console queue rows.
     void this.persist();
   }
@@ -668,7 +668,7 @@ export class SessionDO extends DurableObject<Env> {
     const result = spineTick(rt, clock, segmentKey);
     s.runtime = result.runtime;
     for (const message of result.guideMessages) {
-      this.publishGuideMessage(message); // broadcasts; runtime rides the next persist
+      this.publishGuideMessage(message); // broadcasts + persists (hibernate-safe)
     }
     if (result.guideMessages.length > 0) {
       void this.persist();
