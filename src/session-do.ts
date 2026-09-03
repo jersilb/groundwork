@@ -265,6 +265,9 @@ export class SessionDO extends DurableObject<Env> {
     }
     s.stateVersion += 1;
     this.broadcast();
+    // Persist guideLog + any bridged recommendations. evaluate/pacer/synthesis
+    // previously broadcast-only; DO hibernation dropped LLM→console queue rows.
+    void this.persist();
   }
 
   /** EVALUATOR(+PROBER) pass, run off the message-handling path so an LLM

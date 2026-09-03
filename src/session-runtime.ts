@@ -847,7 +847,7 @@ export function enqueueGuideRecommendation(
   return rec;
 }
 
-function recommendationText(rec: RecommendationEntry): string {
+export function recommendationText(rec: RecommendationEntry): string {
   const a = rec.action;
   if ("text" in a && typeof a.text === "string") return a.text;
   if (a.type === "request_human_intervention") return a.reason;
@@ -864,7 +864,9 @@ function guideMessageToConsoleAction(message: GuideMessage): GuideAction | null 
     case "evaluator":
       return { type: "request_human_intervention", reason: message.text };
     case "pacer":
-      return { type: "time_check", minutesRemaining: 0, text: message.text };
+      // minutesRemaining is unused by the console today; -1 = unknown (LLM pacer
+      // has no SessionClock here). Avoid advertising a false "0 minutes left".
+      return { type: "time_check", minutesRemaining: -1, text: message.text };
     case "synthesis":
       return { type: "summarize", text: message.text, provenance: message.detail ? [message.detail] : [] };
     case "intervention":

@@ -9,7 +9,7 @@
 // No network, no API key, no LLM — the fakes are the contract, exactly like
 // the other guide test scripts.
 import assert from "node:assert/strict";
-import { specFor, computeExitCriteria } from "../src/guide-engine/session-guide.ts";
+import { specFor, normalizeSegmentKey, computeExitCriteria } from "../src/guide-engine/session-guide.ts";
 import { decidePacerAction } from "../src/guide-engine/pacer.ts";
 import { DEMO_SEGMENT_SPECS } from "../src/generated/demo-segment-specs.ts";
 import { SEGMENT_SPECS } from "../src/generated/segment-specs.ts";
@@ -74,6 +74,12 @@ check("specFor resolves hyphen spine keys to demo rubrics (P0 key alignment)", (
 check("specFor still resolves legacy underscore keys via alias (no generic fallback)", () => {
   const reality = specFor({ key: "s2_current_reality", title: "Individual reflection", plannedMinutes: 45 });
   assert.ok(reality.rubric.some((r) => r.id === "specific_current_state"), "underscore alias must not hit generic rubric");
+});
+
+check("specFor resolves legacy s9_commitments_close to closeout demo (semantic rename)", () => {
+  const close = specFor({ key: "s9_commitments_close", title: "Commitments & close", plannedMinutes: 15 });
+  assert.ok(!close.rubric.some((r) => r.id === "specific"), "legacy s9 key must not hit generic rubric");
+  assert.equal(normalizeSegmentKey("s9_commitments_close") === "s9-commitments-close", true);
 });
 
 check("spine reference keys all resolve to demo specs (not generic)", () => {

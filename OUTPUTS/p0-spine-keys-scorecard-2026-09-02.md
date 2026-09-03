@@ -39,3 +39,16 @@
 - Playwright console operability gate
 - Live `test:spine-integration` against wrangler (needs `SESSION_SPINE=true` locally for that harness only)
 - Force-push / secret commits
+
+
+## Adversarial follow-up (Code Review Advisor) — 2026-09-02
+
+| # | Item | Status |
+|---|------|--------|
+| A | Console RecommendationCard shows `action.reason` for intervention (not evidence `rec.reason`) | **FIXED** |
+| B | `publishGuideMessage` persists after LLM enqueue (hibernate-safe) | **FIXED** |
+| C | Legacy `s9_commitments_close` → `s9-closeout` demo alias + test | **FIXED** |
+| D | LLM pacer `minutesRemaining` no longer hardcodes `0` (uses `-1` unknown) | **FIXED** |
+| E | Accept remains decision-log only (D2) — not auto-apply | **DOCUMENTED** (intentional) |
+| F | Stripe apiVersion typecheck + wrangler-dev health CI | **RESIDUAL** (pre-existing on base) |
+| G | `SESSION_SPINE` | **still unset** (correct) |

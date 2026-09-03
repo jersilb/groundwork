@@ -30,6 +30,18 @@ for (const spec of DEMO_SEGMENT_SPECS) {
   DEMO_BY_KEY.set(normalizeSegmentKey(spec.key), spec);
   DEMO_BY_KEY.set(spec.key.replace(/-/g, "_"), spec);
 }
+// Semantic renames (not underscore↔hyphen): old demo key → current spine key.
+const LEGACY_DEMO_KEY_ALIASES: Record<string, string> = {
+  "s9_commitments_close": "s9-closeout",
+  "s9-commitments-close": "s9-closeout",
+};
+for (const [legacy, canonical] of Object.entries(LEGACY_DEMO_KEY_ALIASES)) {
+  const spec = DEMO_BY_KEY.get(canonical);
+  if (spec) {
+    DEMO_BY_KEY.set(legacy, spec);
+    DEMO_BY_KEY.set(normalizeSegmentKey(legacy), spec);
+  }
+}
 
 // Session Guide runtime — the wiring that turns the Guide Engine agents
 // (build plan §5.3) into a live facilitator inside a session Durable Object.
