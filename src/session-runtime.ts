@@ -798,3 +798,79 @@ export function voteQuorumReached(rt: SpineRuntime, segmentKey: string, voteCoun
 export function markVoteAnnounced(rt: SpineRuntime, segmentKey: string): void {
   rt.voteCompletedAnnouncedFor[segmentKey] = true;
 }
+
+/**
+ * Bridge LLM Guide speech onto the instructor console recommendation queue.
+ *
+ * SpineTick already queues deterministic drift/closing recommendations.
+ * EVALUATOR/PROBER/PACER/SYNTHESIZER only wrote to `guideLog`, so the console
+ * "Guide recommendations" Accept/Edit/Dismiss surface stayed empty for LLM
+ * output. This helper is the missing bridge: LLM-originated kinds become
+ * pending RecommendationEntry rows the leader can decide.
+ *
+ * Returns null for kinds the console should not decide (announcements,
+ * deterministic time_checks already queued by spineTick) or when a pending
+ * duplicate already exists.
+ */
+export function enqueueGuideRecommendation(
+  rt: SpineRuntime,
+  message: GuideMessage,
+): RecommendationEntry | null {
+  const action = guideMessageToConsoleAction(message);
+  if (!action) return null;
+
+  const already = rt.recommendations.some(
+    (r) =>
+      r.id === message.id ||
+      (r.status === "pending" && recommendationText(r) === message.text),
+  );
+  if (already) return null;
+
+  const rec: RecommendationEntry = {
+    id: message.id,
+    action,
+    reason: message.detail ?? `guide ${message.kind}`,
+    status: "pending",
+  };
+  rt.recommendations.push(rec);
+  appendEvent(
+    rt,
+    makeEvent(
+      rt.events.length,
+      Date.now(),
+      "recommendation",
+      "guide",
+      `Guide ${message.kind} queued for instructor review`,
+      { recommendationId: rec.id, kind: message.kind, segmentKey: message.segmentKey },
+    ),
+  );
+  return rec;
+}
+
+function recommendationText(rec: RecommendationEntry): string {
+  const a = rec.action;
+  if ("text" in a && typeof a.text === "string") return a.text;
+  if (a.type === "request_human_intervention") return a.reason;
+  if (a.type === "recommend_recovery") return a.reason;
+  if (a.type === "pause") return a.reason;
+  return rec.reason;
+}
+
+/** Map LLM guideLog kinds onto GuideAction shapes the console already renders. */
+function guideMessageToConsoleAction(message: GuideMessage): GuideAction | null {
+  switch (message.kind) {
+    case "probe":
+      return { type: "ask_question", text: message.text };
+    case "evaluator":
+      return { type: "request_human_intervention", reason: message.text };
+    case "pacer":
+      return { type: "time_check", minutesRemaining: 0, text: message.text };
+    case "synthesis":
+      return { type: "summarize", text: message.text, provenance: message.detail ? [message.detail] : [] };
+    case "intervention":
+      return { type: "request_human_intervention", reason: message.text };
+    // announcement / time_check: spineTick already queues the actionable ones.
+    default:
+      return null;
+  }
+}

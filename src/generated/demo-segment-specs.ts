@@ -4,7 +4,7 @@ import type { SegmentSpec } from "../guide-engine/segment-schema.ts";
 
 export const DEMO_SEGMENT_SPECS: SegmentSpec[] = [
   {
-    "key": "s1_welcome",
+    "key": "s1-welcome",
     "lab": 1,
     "title": "Welcome & orientation",
     "planned_minutes": 20,
@@ -35,7 +35,7 @@ export const DEMO_SEGMENT_SPECS: SegmentSpec[] = [
     ]
   },
   {
-    "key": "s2_current_reality",
+    "key": "s2-current-reality",
     "lab": 1,
     "title": "Individual reflection",
     "planned_minutes": 45,
@@ -68,7 +68,7 @@ export const DEMO_SEGMENT_SPECS: SegmentSpec[] = [
     ]
   },
   {
-    "key": "s3_purpose_clarity",
+    "key": "s3-purpose-clarity",
     "lab": 1,
     "title": "Purpose & current-reality mapping",
     "planned_minutes": 45,
@@ -102,7 +102,7 @@ export const DEMO_SEGMENT_SPECS: SegmentSpec[] = [
     ]
   },
   {
-    "key": "s4_themes_tensions",
+    "key": "s4-themes-tensions",
     "lab": 1,
     "title": "Breakout · Themes & tensions",
     "planned_minutes": 45,
@@ -135,7 +135,7 @@ export const DEMO_SEGMENT_SPECS: SegmentSpec[] = [
     ]
   },
   {
-    "key": "s5_report_back_synthesis",
+    "key": "s5-report-back-synthesis",
     "lab": 1,
     "title": "Report-back & synthesis",
     "planned_minutes": 30,
@@ -166,7 +166,7 @@ export const DEMO_SEGMENT_SPECS: SegmentSpec[] = [
     ]
   },
   {
-    "key": "s6_prioritization",
+    "key": "s6-prioritization",
     "lab": 1,
     "title": "Prioritization",
     "planned_minutes": 45,
@@ -200,7 +200,7 @@ export const DEMO_SEGMENT_SPECS: SegmentSpec[] = [
     ]
   },
   {
-    "key": "s7_initiatives",
+    "key": "s7-initiatives",
     "lab": 1,
     "title": "Initiatives & ownership",
     "planned_minutes": 40,
@@ -233,7 +233,7 @@ export const DEMO_SEGMENT_SPECS: SegmentSpec[] = [
     ]
   },
   {
-    "key": "s8_consolidation",
+    "key": "s8-consolidation",
     "lab": 1,
     "title": "Consolidation & challenge review",
     "planned_minutes": 30,
@@ -267,7 +267,7 @@ export const DEMO_SEGMENT_SPECS: SegmentSpec[] = [
     ]
   },
   {
-    "key": "s9_commitments_close",
+    "key": "s9-closeout",
     "lab": 1,
     "title": "Commitments & close",
     "planned_minutes": 15,

@@ -15,7 +15,21 @@ import { DEMO_SEGMENT_SPECS } from "../generated/demo-segment-specs.ts";
 // These are NOT merged into the shipped SEGMENT_SPECS bundle (the compiler
 // emits underscore-prefixed packs separately). Always derived-style data; when
 // a real pack supplies the key, it is consulted the same way here.
-const DEMO_BY_KEY = new Map(DEMO_SEGMENT_SPECS.map((s) => [s.key, s]));
+//
+// Canonical keys match the spine plan (hyphenated: s2-current-reality). The
+// lookup also indexes the legacy underscore form so older fixtures/clients
+// still resolve demos instead of falling through to the generic rubric.
+/** Canonicalize segment keys: underscores and hyphens are equivalent. */
+export function normalizeSegmentKey(key: string): string {
+  return key.replace(/_/g, "-");
+}
+
+const DEMO_BY_KEY = new Map<string, (typeof DEMO_SEGMENT_SPECS)[number]>();
+for (const spec of DEMO_SEGMENT_SPECS) {
+  DEMO_BY_KEY.set(spec.key, spec);
+  DEMO_BY_KEY.set(normalizeSegmentKey(spec.key), spec);
+  DEMO_BY_KEY.set(spec.key.replace(/-/g, "_"), spec);
+}
 
 // Session Guide runtime — the wiring that turns the Guide Engine agents
 // (build plan §5.3) into a live facilitator inside a session Durable Object.
@@ -58,10 +72,20 @@ export const MIN_SUBMISSIONS_TO_EVALUATE = 2;
  * guide immediately uses that pack's objectives and rubrics for its keys.
  */
 export function specFor(segment: SegmentDef, liveFallbackSpecs?: SegmentSpec[]): SegmentSpec {
-  const liveSpec = liveFallbackSpecs?.find((s) => s.key === segment.key);
+  const liveSpec =
+    liveFallbackSpecs?.find((s) => s.key === segment.key) ??
+    liveFallbackSpecs?.find((s) => normalizeSegmentKey(s.key) === normalizeSegmentKey(segment.key));
   if (liveSpec) return liveSpec;
-  const demoSpec = DEMO_BY_KEY.get(segment.key);
-  if (demoSpec) return demoSpec;
+  const demoSpec =
+    DEMO_BY_KEY.get(segment.key) ??
+    DEMO_BY_KEY.get(normalizeSegmentKey(segment.key)) ??
+    DEMO_BY_KEY.get(segment.key.replace(/-/g, "_"));
+  if (demoSpec) {
+    // Return a copy keyed to the caller's segment key so downstream consumers
+    // (DO submission maps, PACER) stay consistent with the live session key.
+    if (demoSpec.key === segment.key) return demoSpec;
+    return { ...demoSpec, key: segment.key, title: segment.title || demoSpec.title, planned_minutes: segment.plannedMinutes || demoSpec.planned_minutes };
+  }
   return defaultSpecFor(segment);
 }
 

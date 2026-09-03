@@ -63,3 +63,10 @@ This file mirrors the campaign-scoped calls the director makes between repo-leve
 - Commit db04bf2: decisions log entry.
 - Deployed via wrangler (Version 2b480ad7): root 200, /console/:key 200, /session/:key 200 on groundwork.jersilb.workers.dev.
 - Remaining from build plan: BreakSpec/BreakoutSpec (Release 2), full-session degraded-mode replay beyond the simulation harness.
+
+## 2026-09-02 — P0 spine keys + console bridge
+- Aligned `_demo` YAML keys to hyphenated spine keys; regenerated demo-segment-specs.
+- Bridged LLM guideLog kinds into runtime.recommendations for the instructor console.
+- Left SESSION_SPINE unset. EVALUATOR remasure: precision 1.000 (gate PASS).
+- Scorecard: OUTPUTS/p0-spine-keys-scorecard-2026-09-02.md
+

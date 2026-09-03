@@ -17,6 +17,7 @@ import {
   voteQuorumReached,
   type SpineRuntime,
   type TransitionContext,
+  enqueueGuideRecommendation,
 } from "../src/session-runtime.ts";
 
 let checks = 0;
@@ -380,4 +381,70 @@ check("vote quorum: reached once every connected phone has voted, announced once
   assert.equal(voteQuorumReached(rt, "s6-prioritization", 9, 0), false, "no phones connected — no quorum signal");
 });
 
+
+check("enqueueGuideRecommendation bridges probe/evaluator/pacer/synthesis to console queue", () => {
+  const rt = startedRuntime();
+  const probe = enqueueGuideRecommendation(rt, {
+    id: "gm-probe-1",
+    kind: "probe",
+    text: "What specifically drains energy on Tuesday nights?",
+    detail: "thin",
+    segmentKey: "s2-current-reality",
+    createdAt: new Date(T0).toISOString(),
+  });
+  assert.ok(probe);
+  assert.equal(probe!.action.type, "ask_question");
+  assert.equal(rt.recommendations.filter((r) => r.status === "pending").length, 1);
+
+  const evaluator = enqueueGuideRecommendation(rt, {
+    id: "gm-eval-1",
+    kind: "evaluator",
+    text: "There's unresolved disagreement in the room on this question.",
+    segmentKey: "s2-current-reality",
+    createdAt: new Date(T0).toISOString(),
+  });
+  assert.ok(evaluator && evaluator.action.type === "request_human_intervention");
+
+  const pacer = enqueueGuideRecommendation(rt, {
+    id: "gm-pacer-1",
+    kind: "pacer",
+    text: "We are past the planned time for this segment.",
+    segmentKey: "s2-current-reality",
+    createdAt: new Date(T0).toISOString(),
+  });
+  assert.ok(pacer && pacer.action.type === "time_check");
+
+  const synthesis = enqueueGuideRecommendation(rt, {
+    id: "gm-syn-1",
+    kind: "synthesis",
+    text: "Draft plan notes are saved.",
+    detail: "theme",
+    segmentKey: "s2-current-reality",
+    createdAt: new Date(T0).toISOString(),
+  });
+  assert.ok(synthesis && synthesis.action.type === "summarize");
+
+  // Announcements are not console-actionable via this bridge.
+  const announcement = enqueueGuideRecommendation(rt, {
+    id: "gm-ann-1",
+    kind: "announcement",
+    text: "Break is over whenever you are ready.",
+    segmentKey: "s2-current-reality",
+    createdAt: new Date(T0).toISOString(),
+  });
+  assert.equal(announcement, null);
+
+  // Dedupes identical pending text / same id.
+  const dup = enqueueGuideRecommendation(rt, {
+    id: "gm-probe-1",
+    kind: "probe",
+    text: "What specifically drains energy on Tuesday nights?",
+    segmentKey: "s2-current-reality",
+    createdAt: new Date(T0).toISOString(),
+  });
+  assert.equal(dup, null);
+  assert.equal(rt.recommendations.filter((r) => r.status === "pending").length, 4);
+});
+
 console.log(`\nPASS — ${checks} runtime checks green.`);
+

@@ -27,6 +27,15 @@ segment's spec from here by key, falling back to `defaultSpecFor`. That lets a
 test lab define segments whose titles/keys match demo keys and immediately get
 segment-specific objectives and rubrics — the same pipeline real packs will use.
 
+## Keys (P0)
+
+Segment `key:` values MUST match `SPINE_REFERENCE_PLAN` in `src/session-plan.ts`
+(hyphenated: `s2-current-reality`, `s9-closeout`). Filenames already use that
+form. A mismatch (underscore vs hyphen) causes `specFor()` to miss the demo
+pack and fall back to the generic 3-criterion rubric — the P0 failure mode.
+`specFor` also aliases underscore→hyphen as a safety net, but canonical keys
+are hyphenated.
+
 ## Caveat
 
 When Jeremy has organic content in `content/packs/church/` and that pack ships,

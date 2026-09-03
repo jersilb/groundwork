@@ -40,3 +40,6 @@ node scripts/test-phase3-resilience.mjs
 - Clean-context verifier pass on any state-machine or clock change (Expert tier).
 - IP-firewall guardian on any new user-visible string or pack content.
 - Jeremy's facilitation language sign-off before R1 exit (Tier 2: guide prompt/identity copy).
+
+| P0 spine keys + LLM→console | `test:demo-pack` + `test:session-runtime` bridge check + real `run-eval-harness` | **2026-09-02 — demo keys hyphen-aligned; bridge green; EVALUATOR precision 1.000** |
+

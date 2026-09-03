@@ -1,7 +1,7 @@
 # Synthetic reference segment (test lab only — not real curriculum).
 # Modeled on build plan §7 "Report-back and synthesis". IP-safe.
 segment:
-  key: s5_report_back_synthesis
+  key: s5-report-back-synthesis
   lab: 1
   title: "Report-back & synthesis"
   planned_minutes: 30

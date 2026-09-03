@@ -51,6 +51,11 @@ max_retries = 5
 # no suite depends on a live LLM.
 [vars]
 GUIDE_ENABLED = "true"
+# SESSION_SPINE is intentionally NOT set here. Enabling it switches new
+# sessions onto the six-hour reference plan + instructor console. Keep it
+# off until demo↔spine segment keys are verified aligned (see P0: hyphen
+# keys in content/packs/_demo and SPINE_REFERENCE_PLAN). Flip only via an
+# explicit env change after that check — never as a silent default.
 
 # Workers AI (Whisper transcription). Real inference always calls out to
 # Cloudflare's service, even under `wrangler dev` — there is no local
