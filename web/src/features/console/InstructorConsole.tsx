@@ -180,7 +180,7 @@ export default function InstructorConsole() {
                 onEditDraft={setEditDraft}
                 onStartEdit={() => {
                   setEditingRecId(rec.id);
-                  setEditDraft(rec.action.type === "time_check" || rec.action.type === "request_confirmation" ? rec.action.text : rec.reason);
+                  setEditDraft(recommendationDisplayText(rec));
                 }}
                 onCancelEdit={() => setEditingRecId(null)}
                 onDecide={(decision, editedText) => {
@@ -193,7 +193,7 @@ export default function InstructorConsole() {
             {decidedRecs.map((rec) => (
               <div key={rec.id} className="flex items-center gap-3 rounded-lg border border-line bg-paper/60 px-4 py-2.5 text-sm">
                 <span className="chip bg-brand-soft text-brand">{rec.status}</span>
-                <span className="min-w-0 flex-1 truncate text-ink-soft">{rec.editedText ?? ("text" in rec.action ? rec.action.text : rec.reason)}</span>
+                <span className="min-w-0 flex-1 truncate text-ink-soft">{rec.editedText ?? recommendationDisplayText(rec)}</span>
                 <span className="shrink-0 text-xs text-faint">{rec.action.type}</span>
               </div>
             ))}
@@ -480,6 +480,19 @@ function SponsorControls({
   );
 }
 
+
+/** Display text for a recommendation — mirrors session-runtime.recommendationDisplayText.
+ * request_human_intervention / recommend_recovery / pause carry copy on action.reason,
+ * not a `text` field and not the meta `rec.reason` (why-line). */
+function recommendationDisplayText(rec: RecommendationEntry): string {
+  const a = rec.action;
+  if ("text" in a && typeof a.text === "string") return a.text;
+  if (a.type === "request_human_intervention") return a.reason;
+  if (a.type === "recommend_recovery") return a.reason;
+  if (a.type === "pause") return a.reason;
+  return rec.reason;
+}
+
 function RecommendationCard({
   rec,
   editing,
@@ -497,7 +510,7 @@ function RecommendationCard({
   onCancelEdit: () => void;
   onDecide: (d: "accepted" | "edited" | "dismissed" | "deferred", editedText?: string) => void;
 }) {
-  const text = "text" in rec.action ? rec.action.text : rec.reason;
+  const text = recommendationDisplayText(rec);
   return (
     <div className="rounded-xl border-l-4 border-accent bg-surface p-5 shadow-card">
       <div className="flex flex-wrap items-center gap-2">
@@ -640,5 +653,3 @@ function breakoutAvailableFor(plan: SessionPlan, rt: SpineRuntime): boolean {
   const here = plan.segments[rt.currentSegmentIndex]?.key;
   return plan.breakouts.some((b) => b.appliesToSegmentKey === here);
 }
-
-

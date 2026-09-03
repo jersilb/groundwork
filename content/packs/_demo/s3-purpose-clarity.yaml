@@ -1,7 +1,7 @@
 # Synthetic reference segment (test lab only — not real curriculum).
 # Modeled on build plan §7 "Whole-group mapping". IP-safe.
 segment:
-  key: s3_purpose_clarity
+  key: s3-purpose-clarity
   lab: 1
   title: "Purpose & current-reality mapping"
   planned_minutes: 45

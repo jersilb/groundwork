@@ -230,3 +230,38 @@ BreakoutSpec (Release-2) and observable `vote_completed` for the leader (M4).
 - Live-server verification (wrangler dev, local): / 200, /session-plans/reference 200 (9 segments / 3 breaks / 2 breakouts / 360 min), /console/:key 200, /session/:key 200.
 - Live-asset sanity: PWA manifest + cache manifest regenerate; console route serves the React app shell.
 - No new defects found in this sweep. Known open items unchanged: BreakSpec/BreakoutSpec (Release 2), degraded-mode replay harness extension.
+
+## 2026-09-02 — P0: demo↔spine key alignment + LLM→console bridge
+
+1. **Demo pack keys are hyphenated** to match `SPINE_REFERENCE_PLAN` (`s2-current-reality`,
+   `s9-closeout`). Underscore keys were causing `specFor()` misses and generic rubrics.
+   `normalizeSegmentKey` / dual-index alias keeps legacy underscore lookups working.
+2. **`SESSION_SPINE` stays unset** in `[vars]` — keys are wired; enabling remains Jeremy's
+   explicit env change (documented in `wrangler.toml`).
+3. **LLM Guide speech bridges to the console recommendation queue** via
+   `enqueueGuideRecommendation` (probe/evaluator/pacer/synthesis → Accept/Edit/Dismiss).
+4. **EVALUATOR remasured** on Anthropic: thin precision **1.000** (16/16 clean) — gate PASS.
+   Workers AI / Anthropic stack unchanged; not blocked on Grok.
+
+## 2026-09-02 — Code-review follow-ups on P0 bridge (PR #1)
+
+1. **Console display for `request_human_intervention`**: InstructorConsole now uses
+   the same display-text rules as `recommendationDisplayText()` (action.reason for
+   intervention / pause / recovery; action.text otherwise). Edit-draft seeding uses
+   the same helper so Edit no longer seeds the meta why-line.
+2. **`publishGuideMessage` persists**: LLM evaluator/pacer/synthesis paths now
+   `persist()` after mutating guideLog / runtime recommendations so DO hibernation
+   cannot drop a just-queued recommendation.
+3. **Accept semantics (documented; publish-on-Accept deferred)**: Accept / Edit /
+   Dismiss / Defer currently **record the leader's decision** on the recommendation
+   row (`status`, `editedText`, event log). They do **not** re-publish copy to the
+   room. Guide speech already lands in `guideLog` when the recommendation is
+   enqueued (LLM bridge and spineTick). Publishing an edited wording to the room on
+   Accept/Edit is an intentional follow-up — not in this PR.
+4. **Legacy stem alias**: `s9_commitments_close` / `s9-commitments-close` resolve to
+   `s9-closeout` via `LEGACY_SEGMENT_KEY_ALIASES` (underscore↔hyphen alone cannot
+   recover a renamed stem).
+5. **PACER `minutesRemaining`**: pacer GuideMessages carry `minutesRemaining` from
+   session budget; console time_check bridging no longer hard-codes 0.
+6. **Dual-queue pacing**: if a pending spineTick `time_check` already exists, LLM
+   pacer enqueue is skipped for that window (same 30s alarm).

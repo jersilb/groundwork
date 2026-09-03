@@ -1,7 +1,7 @@
 # Synthetic reference segment (test lab only — not real curriculum).
 # Modeled on build plan §7 "Welcome and orientation". IP-safe vocabulary.
 segment:
-  key: s1_welcome
+  key: s1-welcome
   lab: 1
   title: "Welcome & orientation"
   planned_minutes: 20

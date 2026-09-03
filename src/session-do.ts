@@ -35,6 +35,7 @@ import {
   markVoteAnnounced,
   normalizeRuntime,
   spineTick,
+  enqueueGuideRecommendation,
   voteQuorumReached,
   type SpineAction,
   type TransitionContext,
@@ -255,8 +256,18 @@ export class SessionDO extends DurableObject<Env> {
     const s = this.state;
     if (!s) return;
     s.guideLog = appendGuideMessage(s.guideLog, message);
+    // Bridge LLM Guide speech into the console recommendation queue when this
+    // is a spine session. Deterministic spineTick kinds are skipped inside
+    // enqueueGuideRecommendation; probe/evaluator/pacer/synthesis become
+    // Accept/Edit/Dismiss rows. No-op when SESSION_SPINE is off (no runtime).
+    if (s.runtime) {
+      enqueueGuideRecommendation(s.runtime, message);
+    }
     s.stateVersion += 1;
     this.broadcast();
+    // Persist guideLog + any bridged recommendations. LLM evaluate/pacer/synthesis
+    // previously broadcast-only; DO hibernation dropped LLM→console queue rows.
+    void this.persist();
   }
 
   /** EVALUATOR(+PROBER) pass, run off the message-handling path so an LLM
@@ -657,7 +668,7 @@ export class SessionDO extends DurableObject<Env> {
     const result = spineTick(rt, clock, segmentKey);
     s.runtime = result.runtime;
     for (const message of result.guideMessages) {
-      this.publishGuideMessage(message); // broadcasts; runtime rides the next persist
+      this.publishGuideMessage(message); // broadcasts + persists (hibernate-safe)
     }
     if (result.guideMessages.length > 0) {
       void this.persist();

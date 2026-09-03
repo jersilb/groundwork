@@ -1,7 +1,7 @@
 # Synthetic reference segment (test lab only — not real curriculum).
 # Modeled on build plan §7 "Individual reflection and sharing". IP-safe.
 segment:
-  key: s2_current_reality
+  key: s2-current-reality
   lab: 1
   title: "Individual reflection"
   planned_minutes: 45

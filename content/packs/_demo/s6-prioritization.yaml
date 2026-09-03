@@ -1,7 +1,7 @@
 # Synthetic reference segment (test lab only — not real curriculum).
 # Modeled on build plan §7 "Prioritization". Uses a vote-then-discuss mode.
 segment:
-  key: s6_prioritization
+  key: s6-prioritization
   lab: 1
   title: "Prioritization"
   planned_minutes: 45

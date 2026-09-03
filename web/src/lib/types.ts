@@ -29,6 +29,8 @@ export interface GuideMessage {
   kind: GuideMessageKind;
   text: string;
   detail?: string;
+  /** Session minutes remaining (PACER) — mirrors server GuideMessage. */
+  minutesRemaining?: number;
   segmentKey: string;
   createdAt: string;
 }

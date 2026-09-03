@@ -1,7 +1,7 @@
 # Synthetic reference segment (test lab only — not real curriculum).
 # Modeled on build plan §7 "Consolidation and challenge review". IP-safe.
 segment:
-  key: s8_consolidation
+  key: s8-consolidation
   lab: 1
   title: "Consolidation & challenge review"
   planned_minutes: 30

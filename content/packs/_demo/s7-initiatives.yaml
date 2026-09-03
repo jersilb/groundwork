@@ -1,7 +1,7 @@
 # Synthetic reference segment (test lab only — not real curriculum).
 # Modeled on build plan §7 "Breakout · Initiative/ownership packet". IP-safe.
 segment:
-  key: s7_initiatives
+  key: s7-initiatives
   lab: 1
   title: "Initiatives & ownership"
   planned_minutes: 40

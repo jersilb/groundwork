@@ -9,7 +9,7 @@
 // No network, no API key, no LLM — the fakes are the contract, exactly like
 // the other guide test scripts.
 import assert from "node:assert/strict";
-import { specFor, computeExitCriteria } from "../src/guide-engine/session-guide.ts";
+import { specFor, computeExitCriteria, resolveSegmentKeyAlias } from "../src/guide-engine/session-guide.ts";
 import { decidePacerAction } from "../src/guide-engine/pacer.ts";
 import { DEMO_SEGMENT_SPECS } from "../src/generated/demo-segment-specs.ts";
 import { SEGMENT_SPECS } from "../src/generated/segment-specs.ts";
@@ -34,15 +34,15 @@ check("demo pack ships a full-day arc of 9 segments", () => {
   assert.equal(DEMO_SEGMENT_SPECS.length, 9);
   const keys = DEMO_SEGMENT_SPECS.map((s) => s.key);
   assert.deepEqual(keys, [
-    "s1_welcome",
-    "s2_current_reality",
-    "s3_purpose_clarity",
-    "s4_themes_tensions",
-    "s5_report_back_synthesis",
-    "s6_prioritization",
-    "s7_initiatives",
-    "s8_consolidation",
-    "s9_commitments_close",
+    "s1-welcome",
+    "s2-current-reality",
+    "s3-purpose-clarity",
+    "s4-themes-tensions",
+    "s5-report-back-synthesis",
+    "s6-prioritization",
+    "s7-initiatives",
+    "s8-consolidation",
+    "s9-closeout",
   ]);
 });
 
@@ -52,7 +52,7 @@ check("live bundle stays empty (no real curriculum leaked into the shipped pack)
 
 check("specFor resolves demo objectives and rubrics by key (not the generic fallback)", () => {
   const def = (key: string, title: string, plannedMinutes: number): SegmentDef => ({ key, title, plannedMinutes });
-  const reality = specFor(def("s2_current_reality", "Individual reflection", 45));
+  const reality = specFor(def("s2-current-reality", "Individual reflection", 45));
   // The demo objective is nothing like the generic "Conduct the ... segment".
   assert.ok(reality.objective.toLowerCase().includes("diagnosis precedes goal-setting"));
   assert.ok(reality.input_mode === "silent_write");
@@ -63,6 +63,48 @@ check("specFor resolves demo objectives and rubrics by key (not the generic fall
 check("specFor still falls back to the generic rubric for unknown keys", () => {
   const generic = specFor({ key: "warmup", title: "Warm-up question", plannedMinutes: 10 });
   assert.ok(generic.rubric.some((r) => r.id === "specific"));
+});
+
+check("specFor resolves hyphen spine keys to demo rubrics (P0 key alignment)", () => {
+  const reality = specFor({ key: "s2-current-reality", title: "Individual reflection", plannedMinutes: 45 });
+  assert.ok(reality.objective.toLowerCase().includes("diagnosis precedes goal-setting"));
+  assert.ok(reality.rubric.some((r) => r.id === "specific_current_state"));
+});
+
+check("specFor still resolves legacy underscore keys via alias (no generic fallback)", () => {
+  const reality = specFor({ key: "s2_current_reality", title: "Individual reflection", plannedMinutes: 45 });
+  assert.ok(reality.rubric.some((r) => r.id === "specific_current_state"), "underscore alias must not hit generic rubric");
+});
+
+check("legacy s9_commitments_close stem aliases to s9-closeout demo rubric", () => {
+  assert.equal(resolveSegmentKeyAlias("s9_commitments_close"), "s9-closeout");
+  assert.equal(resolveSegmentKeyAlias("s9-commitments-close"), "s9-closeout");
+  const legacy = specFor({ key: "s9_commitments_close", title: "Close", plannedMinutes: 30 });
+  const canonical = specFor({ key: "s9-closeout", title: "Close", plannedMinutes: 30 });
+  assert.ok(!legacy.rubric.some((r) => r.id === "specific"), "legacy stem must not hit generic rubric");
+  assert.deepEqual(
+    legacy.rubric.map((r) => r.id),
+    canonical.rubric.map((r) => r.id),
+    "legacy stem must resolve the same demo rubric as s9-closeout",
+  );
+});
+
+check("spine reference keys all resolve to demo specs (not generic)", () => {
+  const spineKeys = [
+    "s1-welcome",
+    "s2-current-reality",
+    "s3-purpose-clarity",
+    "s4-themes-tensions",
+    "s5-report-back-synthesis",
+    "s6-prioritization",
+    "s7-initiatives",
+    "s8-consolidation",
+    "s9-closeout",
+  ];
+  for (const key of spineKeys) {
+    const spec = specFor({ key, title: key, plannedMinutes: 30 });
+    assert.ok(!spec.rubric.some((r) => r.id === "specific"), `${key} fell through to generic rubric`);
+  }
 });
 
 for (const spec of DEMO_SEGMENT_SPECS) {
@@ -93,7 +135,7 @@ for (const spec of DEMO_SEGMENT_SPECS) {
 // The prioritization segment uses a vote — PACER must still be submissive to
 // the submission floor for exit criteria when the vote hasn't cleared.
 check("prioritization: vote_completed is a PACER exit criterion", () => {
-  const spec = specFor({ key: "s6_prioritization", title: "Prioritization", plannedMinutes: 45 });
+  const spec = specFor({ key: "s6-prioritization", title: "Prioritization", plannedMinutes: 45 });
   assert.ok(spec.exit_criteria.includes("vote_completed"));
 });
 

@@ -1,7 +1,7 @@
 # Synthetic reference segment (test lab only — not real curriculum).
 # Modeled on build plan §7 "Commitments and close". IP-safe.
 segment:
-  key: s9_commitments_close
+  key: s9-closeout
   lab: 1
   title: "Commitments & close"
   planned_minutes: 15

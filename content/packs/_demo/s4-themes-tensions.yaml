@@ -1,7 +1,7 @@
 # Synthetic reference segment (test lab only — not real curriculum).
 # Modeled on build plan §7 "Breakout · Themes & tensions". IP-safe.
 segment:
-  key: s4_themes_tensions
+  key: s4-themes-tensions
   lab: 1
   title: "Breakout · Themes & tensions"
   planned_minutes: 45
