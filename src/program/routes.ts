@@ -2,6 +2,7 @@ import type { Env } from "../index.ts";
 import { createOrg, createUser, type CreateOrgBody, type CreateUserBody } from "./org.ts";
 import { createProgram, scheduleLabSession, completeLabSession, recordConsent, getProgramState, openLabSession, LabSequenceError } from "./program.ts";
 import { createInitiative, addInitiativeStep, getOverdueSteps, type CreateInitiativeBody } from "./initiatives.ts";
+import type { CappedWrite } from "./text-limits.ts";
 import { generateNudgesForProgram, isMissingCoachNudgeTableError } from "./coach.ts";
 import { createReviewCycle, completeReviewCycle, computeHealthSnapshot } from "./review-cycle.ts";
 import { upsertOrgCreator, requireOrgMember, requireProgramMember, getAuthFromRequest, type AuthContext } from "../auth/cloudflare-access.ts";
@@ -21,6 +22,20 @@ function authRequired(): Response {
 
 function forbidden(): Response {
   return Response.json({ error: "not authorized for this organization" }, { status: 403 });
+}
+
+/** 201 body for a capped write. Exactly the existing `{ id }` shape when
+ * nothing was cut — the dashboard parses that and nothing may change it. When
+ * the write boundary did cut the submitted text, the same shape plus an
+ * additive signal, so a caller can tell that what it sent is not all that was
+ * kept (and how much was). */
+function createdResponse(created: CappedWrite): Response {
+  return Response.json(
+    created.truncated
+      ? { id: created.id, truncated: true, storedLength: created.storedLength }
+      : { id: created.id },
+    { status: 201 },
+  );
 }
 
 async function requireLabSessionOrg(env: Env, labSessionId: string): Promise<string | null> {
@@ -156,8 +171,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response | n
     if (!auth) return authRequired();
     if (!(await requireProgramMember(env, auth, m[1]))) return forbidden();
     const body = await json<CreateInitiativeBody>(request);
-    const id = await createInitiative(env, m[1], body);
-    return Response.json({ id }, { status: 201 });
+    const created = await createInitiative(env, m[1], body);
+    return createdResponse(created);
   }
 
   m = p.match(/^\/initiative\/([A-Za-z0-9_-]+)\/step$/);
@@ -167,8 +182,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response | n
     const orgId = await requireInitiativeOrg(env, m[1]);
     if (!orgId || !(await requireOrgMember(env, auth, orgId))) return forbidden();
     const body = await json<{ description: string; ownerUserId?: string; dueDate?: string }>(request);
-    const id = await addInitiativeStep(env, m[1], body.description, body.ownerUserId, body.dueDate);
-    return Response.json({ id }, { status: 201 });
+    const created = await addInitiativeStep(env, m[1], body.description, body.ownerUserId, body.dueDate);
+    return createdResponse(created);
   }
 
   m = p.match(/^\/program\/([A-Za-z0-9_-]+)\/overdue-steps$/);

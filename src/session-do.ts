@@ -133,6 +133,21 @@ export class SessionDO extends DurableObject<Env> {
    * Opus spend, duplicate room message, duplicate artifacts). Set
    * synchronously with the mutex claim, cleared in the pass's finally(). */
   private synthesisInFlightKey: string | null = null;
+  /** How many submissions the in-flight synthesis pass snapshotted when it
+   * claimed the mutex. A same-segment boundary arriving mid-flight counts as
+   * covered ONLY while the segment's submission count has not grown past
+   * this high-water mark: the unconditional skip silently dropped
+   * submissions that arrived after the snapshot — they reached no synthesis
+   * prompt at all (CRITIC round 2, item B). Set and cleared synchronously
+   * with the mutex claim. */
+  private synthesisInFlightSubmissionCount: number | null = null;
+  /** Segment keys whose boundary-synthesis failure notice has already
+   * reached the room, so a retry or same-segment re-run can never re-publish
+   * it (the room's guide log is capped at 25 messages — duplicate notices
+   * evict real guide history; CRITIC round 2, item A). Cleared when a
+   * synthesis pass for the segment succeeds: a later failure after real
+   * progress is new information. */
+  private synthesisFailureNotified = new Set<string>();
   /** Cached LLM client — one per DO instance, not one per guide action. */
   private guideClientInstance: LlmClient | null = null;
   /** The spine plan (only meaningful when SESSION_SPINE=true and this
@@ -484,12 +499,21 @@ export class SessionDO extends DurableObject<Env> {
       return;
     }
     if (this.guideWorkInFlight || this.guideAgentSkipped("synthesis")) {
-      // A boundary for the segment a running synthesis already covers is the
-      // SAME boundary — the in-flight pass is its synthesis. Stashing it let
-      // the in-flight finally() run the boundary a second time after a normal
-      // backtrack-and-re-advance (2x Opus spend, 2 room messages, 2 artifact
-      // rows). The running pass already covers this boundary; skip the stash.
-      if (segmentKey === this.synthesisInFlightKey) return;
+      // A boundary for the segment a running synthesis covers is the SAME
+      // boundary only while that pass's snapshot covers ALL of the segment's
+      // material. Stashing the covered case let the in-flight finally() run
+      // the boundary a second time after a normal backtrack-and-re-advance
+      // (2x Opus spend, 2 room messages, 2 artifact rows); skipping it
+      // UNCONDITIONALLY silently dropped submissions that arrived after the
+      // snapshot — they reached no synthesis prompt at all (CRITIC round 2,
+      // item B). Compare against the pass's high-water mark: no new material
+      // → skip (the running pass is this boundary's synthesis); new material
+      // → stash so it is synthesized once the mutex frees.
+      if (segmentKey === this.synthesisInFlightKey) {
+        const covered = this.synthesisInFlightSubmissionCount ?? 0;
+        const current = Object.keys(s.submissions[segmentKey] ?? {}).length;
+        if (current <= covered) return;
+      }
       await this.stashPendingSynthesis(segmentKey);
       return;
     }
@@ -500,6 +524,9 @@ export class SessionDO extends DurableObject<Env> {
     this.consumePendingSynthesis(segmentKey);
     this.guideWorkInFlight = true;
     this.synthesisInFlightKey = segmentKey;
+    // The high-water mark this pass consumes — a later same-segment boundary
+    // only counts as covered while the count stands still (item B).
+    this.synthesisInFlightSubmissionCount = submissions.length;
     await this.persistPendingSynthesis();
     const work = (async () => {
       const ctx = this.buildGuideContext(segmentKey, submissions);
@@ -517,35 +544,49 @@ export class SessionDO extends DurableObject<Env> {
       });
       this.publishGuideMessage(result.message);
       await this.recordGuideSuccess("synthesis");
+      // A successful pass ends the segment's failure episode: a later
+      // provenance stop after real progress is new information for the room.
+      this.synthesisFailureNotified.delete(segmentKey);
     })()
       .catch(async (err) => {
-        // Provenance failures are the designed hard path (a draft that lies
-        // about sourcing is worse than none) — tell the room honestly and
-        // keep the raw input available for a manual synthesis.
         if (err instanceof ProvenanceVerificationError) {
-          this.publishGuideMessage({
-            id: crypto.randomUUID(),
-            kind: "synthesis",
-            segmentKey,
-            text: `Draft notes from this segment failed source verification and were not saved. The raw input is intact — you can synthesize manually from the dashboard.`,
-            createdAt: new Date().toISOString(),
-          });
+          // Provenance verification is the designed HARD STOP (a draft that
+          // lies about sourcing is worse than none): tell the room honestly —
+          // ONCE per boundary, deduped by segment key across re-runs — and do
+          // NOT re-stash. A provenance failure cannot pass on retry, so
+          // re-stashing it was pure Opus spend plus a duplicate notice that
+          // evicted the room's real guide history (CRITIC round 2, item A:
+          // measured ~14 attempts / ~14 notices in one simulated hour). The
+          // raw input stays available for a manual synthesis from the
+          // dashboard.
+          if (!this.synthesisFailureNotified.has(segmentKey)) {
+            this.synthesisFailureNotified.add(segmentKey);
+            this.publishGuideMessage({
+              id: crypto.randomUUID(),
+              kind: "synthesis",
+              segmentKey,
+              text: `Draft notes from this segment failed source verification and were not saved. The raw input is intact — you can synthesize manually from the dashboard.`,
+              createdAt: new Date().toISOString(),
+            });
+          }
+        } else {
+          /* Transient/provider/timeout/parse failures can plausibly succeed
+           * on retry — re-stash so the alarm path retries after the backoff
+           * window. Re-stash BEFORE recording the failure: a fault in the
+           * health recorder (a storage hiccup in persistGuideHealth) used to
+           * throw past this line and strand the pass (CRITIC round 2, item
+           * C). Safe against livelock: the per-agent skip gate bounds how
+           * often the retry can re-spend, and MAX_PENDING_SYNTHESIS_KEYS
+           * bounds the list. */
+          await this.stashPendingSynthesis(segmentKey);
         }
-        /* Other guide failures stay off the room's screen — but never silent:
-         * logged, counted, and backed off like every other guide agent. */
+        /* Failures stay off the room's screen — but never silent: logged,
+         * counted, and backed off like every other guide agent. */
         await this.recordGuideFailure("synthesis", err);
-        /* The stash entry was consumed before this attempt; the
-         * cannot-start path is durably retried but the started-and-failed
-         * path was not — a transient provider failure (including the 20s
-         * LlmTimeoutError) silently cost this segment its notes. Re-stash
-         * so the alarm path retries after the backoff window. Safe against
-         * livelock: the per-agent skip gate bounds how often the retry can
-         * re-spend (recordGuideFailure just opened the window), and
-         * MAX_PENDING_SYNTHESIS_KEYS bounds the list. */
-        await this.stashPendingSynthesis(segmentKey);
       })
       .finally(async () => {
         this.synthesisInFlightKey = null;
+        this.synthesisInFlightSubmissionCount = null;
         this.guideWorkInFlight = false;
         await this.runPendingSynthesisIfIdle();
       });

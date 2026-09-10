@@ -305,24 +305,31 @@ export async function evaluateAndMaybeProbe(ctx: GuideContext, spec: SegmentSpec
     );
   } else {
     // thin | off_track — this is PROBER's whole job: a specific follow-up.
+    // The room-visible detail on the SUCCESS path is the verdict (pre-wave
+    // behavior — wave 1.1 had smuggled evidence in here on both paths).
     let text: string;
+    let detail: string;
     try {
       const probe = await runProber(
         { segment: spec, evaluatorOutput: output, submissions: ctx.submissions },
         llm,
       );
       text = probe.probe;
+      detail = output.verdict;
     } catch (err) {
       // The paid EVALUATOR verdict survives; publish a deterministic probe
-      // from the evaluator's own output instead (no new LLM spend).
+      // from the evaluator's own output instead (no new LLM spend). This
+      // fallback is new behavior by design, and its detail carries the
+      // evaluator's evidence — the diagnostic that explains the probe.
       proberError = err;
+      detail = output.evidence;
       const area = output.weakest_criterion ? ` (weakest area: ${output.weakest_criterion})` : "";
       text =
         output.verdict === "off_track"
           ? `The room's input has drifted from this segment's question${area}. Consider restating the question and asking for one concrete answer.`
           : `The room's input is still general${area}. Consider asking for one specific example — a name, a date, or a number.`;
     }
-    message = makeGuideMessage("probe", text, ctx.segment.key, output.evidence);
+    message = makeGuideMessage("probe", text, ctx.segment.key, detail);
   }
 
   return { message, output, proberError };

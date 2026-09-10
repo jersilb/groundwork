@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { Target, Plus, X, UserRound } from "lucide-react";
 import { api } from "../../lib/api";
+// The caps and the truncation rule come from the server module itself, so the
+// maxLength this panel enforces, the text it shows optimistically, and the cut
+// the write boundary applies are one and the same. Do not copy these — the
+// shared module is deliberately dependency-free so it can be imported here.
+import { MAX_INITIATIVE_TITLE_CHARS, MAX_STEP_DESCRIPTION_CHARS, truncateChars } from "../../../../src/program/text-limits";
 import type { Initiative, OverdueStep } from "./types";
 import { programStore } from "./program-store";
 import { EmptyState, ErrorBanner, PanelHeader, StatusChip, formatDate, formatShortDate } from "./bits";
@@ -19,6 +24,16 @@ const EMPTY_DRAFT: StepDraft = { description: "", owner: "", dueDate: "" };
 
 function daysOverdue(iso: string): number {
   return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000));
+}
+
+/** Visible length feedback for a capped field — muted until the cap is
+ * reached, then highlighted, so a cut never comes as a surprise. */
+function CharCounter({ used, max }: { used: number; max: number }) {
+  return (
+    <span className={"text-xs " + (used >= max ? "text-warn" : "text-muted")}>
+      {used}/{max}
+    </span>
+  );
 }
 
 /**
@@ -67,7 +82,10 @@ export default function InitiativesPanel({ programId }: InitiativesPanelProps) {
     try {
       const whyNow = newDesc.trim() || undefined;
       const { id } = await api.createInitiative(programId, { title, whyNow });
-      const next = [...initiatives, { id, title, whyNow, steps: [] }];
+      // Show exactly what the server kept: the write boundary caps the title
+      // at MAX_INITIATIVE_TITLE_CHARS, so rendering the raw submission here
+      // would display text the server dropped until the next reload.
+      const next = [...initiatives, { id, title: truncateChars(title, MAX_INITIATIVE_TITLE_CHARS), whyNow, steps: [] }];
       setInitiatives(next);
       setNewTitle("");
       setNewDesc("");
@@ -96,9 +114,13 @@ export default function InitiativesPanel({ programId }: InitiativesPanelProps) {
         draft.owner.trim() || undefined,
         dueIso,
       );
+      // Store what the server actually kept, not the raw draft — the write
+      // boundary truncates at MAX_STEP_DESCRIPTION_CHARS and the optimistic
+      // row must never render text the server dropped.
+      const storedDescription = truncateChars(description, MAX_STEP_DESCRIPTION_CHARS);
       const next = initiatives.map((i) =>
         i.id === initiativeId
-          ? { ...i, steps: [...i.steps, { id, description, ownerUserId: draft.owner.trim() || undefined, dueDate: dueIso }] }
+          ? { ...i, steps: [...i.steps, { id, description: storedDescription, ownerUserId: draft.owner.trim() || undefined, dueDate: dueIso }] }
           : i,
       );
       setInitiatives(next);
@@ -136,11 +158,15 @@ export default function InitiativesPanel({ programId }: InitiativesPanelProps) {
         <div className="mb-5 rounded-xl border border-line bg-paper/60 p-5">
           <div className="space-y-3">
             <div>
-              <label className="label" htmlFor="initiative-title">Initiative name</label>
+              <div className="flex items-center justify-between">
+                <label className="label" htmlFor="initiative-title">Initiative name</label>
+                <CharCounter used={newTitle.length} max={MAX_INITIATIVE_TITLE_CHARS} />
+              </div>
               <input
                 id="initiative-title"
                 className="input"
                 placeholder="e.g. Rebuild the volunteer pipeline"
+                maxLength={MAX_INITIATIVE_TITLE_CHARS}
                 value={newTitle}
                 onChange={(e) => setNewTitle(e.target.value)}
               />
@@ -204,76 +230,81 @@ export default function InitiativesPanel({ programId }: InitiativesPanelProps) {
         />
       ) : (
         <ul className="space-y-4">
-          {initiatives.map((initiative) => (
-            <li key={initiative.id} className="rounded-xl border border-line p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="font-display text-lg">{initiative.title}</h3>
-                  {initiative.description && <p className="mt-1 text-sm text-muted">{initiative.description}</p>}
+          {initiatives.map((initiative) => {
+            const draft = stepDrafts[initiative.id] ?? EMPTY_DRAFT;
+            return (
+              <li key={initiative.id} className="rounded-xl border border-line p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="font-display text-lg">{initiative.title}</h3>
+                    {initiative.description && <p className="mt-1 text-sm text-muted">{initiative.description}</p>}
+                  </div>
+                  <StatusChip tone="neutral">{initiative.steps.length} step{initiative.steps.length === 1 ? "" : "s"}</StatusChip>
                 </div>
-                <StatusChip tone="neutral">{initiative.steps.length} step{initiative.steps.length === 1 ? "" : "s"}</StatusChip>
-              </div>
 
-              {initiative.steps.length > 0 && (
-                <ul className="mt-3 space-y-1.5">
-                  {initiative.steps.map((step) => {
-                    const isOverdue = step.dueDate ? overdueIds.has(step.id) : false;
-                    const days = step.dueDate ? daysOverdue(step.dueDate) : 0;
-                    return (
-                      <li key={step.id} className="flex flex-wrap items-center gap-2 text-sm">
-                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand" aria-hidden />
-                        <span className="min-w-0 flex-1 text-ink">{step.description}</span>
-                        {step.ownerUserId && (
-                          <span className="inline-flex items-center gap-1 text-xs text-muted">
-                            <UserRound className="h-3.5 w-3.5" aria-hidden /> {step.ownerUserId}
-                          </span>
-                        )}
-                        {step.dueDate && <span className="text-xs text-muted">due {formatShortDate(step.dueDate)}</span>}
-                        {isOverdue && <StatusChip tone={days >= 8 ? "err" : "warn"}>{days} day{days === 1 ? "" : "s"} overdue</StatusChip>}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
+                {initiative.steps.length > 0 && (
+                  <ul className="mt-3 space-y-1.5">
+                    {initiative.steps.map((step) => {
+                      const isOverdue = step.dueDate ? overdueIds.has(step.id) : false;
+                      const days = step.dueDate ? daysOverdue(step.dueDate) : 0;
+                      return (
+                        <li key={step.id} className="flex flex-wrap items-center gap-2 text-sm">
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand" aria-hidden />
+                          <span className="min-w-0 flex-1 text-ink">{step.description}</span>
+                          {step.ownerUserId && (
+                            <span className="inline-flex items-center gap-1 text-xs text-muted">
+                              <UserRound className="h-3.5 w-3.5" aria-hidden /> {step.ownerUserId}
+                            </span>
+                          )}
+                          {step.dueDate && <span className="text-xs text-muted">due {formatShortDate(step.dueDate)}</span>}
+                          {isOverdue && <StatusChip tone={days >= 8 ? "err" : "warn"}>{days} day{days === 1 ? "" : "s"} overdue</StatusChip>}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
 
-              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
-                <input
-                  className="input w-full text-sm sm:w-56"
-                  placeholder="Next step…"
-                  aria-label={"Step for " + initiative.title}
-                  value={(stepDrafts[initiative.id] ?? EMPTY_DRAFT).description}
-                  onChange={(e) =>
-                    setStepDrafts((prev) => ({ ...prev, [initiative.id]: { ...(prev[initiative.id] ?? EMPTY_DRAFT), description: e.target.value } }))
-                  }
-                />
-                <input
-                  type="date"
-                  className="input w-auto text-sm"
-                  aria-label="Due date"
-                  value={(stepDrafts[initiative.id] ?? EMPTY_DRAFT).dueDate}
-                  onChange={(e) =>
-                    setStepDrafts((prev) => ({ ...prev, [initiative.id]: { ...(prev[initiative.id] ?? EMPTY_DRAFT), dueDate: e.target.value } }))
-                  }
-                />
-                <input
-                  className="input w-full text-sm sm:w-36"
-                  placeholder="Owner (optional)"
-                  aria-label="Step owner"
-                  value={(stepDrafts[initiative.id] ?? EMPTY_DRAFT).owner}
-                  onChange={(e) =>
-                    setStepDrafts((prev) => ({ ...prev, [initiative.id]: { ...(prev[initiative.id] ?? EMPTY_DRAFT), owner: e.target.value } }))
-                  }
-                />
-                <button
-                  className="btn btn-accent text-sm"
-                  disabled={busy === "step:" + initiative.id}
-                  onClick={() => addStep(initiative.id)}
-                >
-                  {busy === "step:" + initiative.id ? "Adding…" : "Add step"}
-                </button>
-              </div>
-            </li>
-          ))}
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
+                  <input
+                    className="input w-full text-sm sm:w-56"
+                    placeholder="Next step…"
+                    aria-label={"Step for " + initiative.title}
+                    maxLength={MAX_STEP_DESCRIPTION_CHARS}
+                    value={draft.description}
+                    onChange={(e) =>
+                      setStepDrafts((prev) => ({ ...prev, [initiative.id]: { ...(prev[initiative.id] ?? EMPTY_DRAFT), description: e.target.value } }))
+                    }
+                  />
+                  <CharCounter used={draft.description.length} max={MAX_STEP_DESCRIPTION_CHARS} />
+                  <input
+                    type="date"
+                    className="input w-auto text-sm"
+                    aria-label="Due date"
+                    value={draft.dueDate}
+                    onChange={(e) =>
+                      setStepDrafts((prev) => ({ ...prev, [initiative.id]: { ...(prev[initiative.id] ?? EMPTY_DRAFT), dueDate: e.target.value } }))
+                    }
+                  />
+                  <input
+                    className="input w-full text-sm sm:w-36"
+                    placeholder="Owner (optional)"
+                    aria-label="Step owner"
+                    value={draft.owner}
+                    onChange={(e) =>
+                      setStepDrafts((prev) => ({ ...prev, [initiative.id]: { ...(prev[initiative.id] ?? EMPTY_DRAFT), owner: e.target.value } }))
+                    }
+                  />
+                  <button
+                    className="btn btn-accent text-sm"
+                    disabled={busy === "step:" + initiative.id}
+                    onClick={() => addStep(initiative.id)}
+                  >
+                    {busy === "step:" + initiative.id ? "Adding…" : "Add step"}
+                  </button>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>

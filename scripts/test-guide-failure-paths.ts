@@ -29,6 +29,20 @@
 //   * guideClient() must reuse one client per DO instance — and the REAL
 //     guide call path (not a shadowed accessor) must use that instance.
 //
+// CRITIC wave-1.2 findings closed here (money pump / dropped material /
+// double fault / artifact duplication / smuggled detail change):
+//
+//   * a provenance verification failure is a designed HARD STOP: no re-stash,
+//     no re-spend, exactly one honest notice (deduped by segment key),
+//   * a same-segment boundary that carries submissions the in-flight pass
+//     never snapshotted is still synthesized; a no-new-material boundary is
+//     still skipped (the round-1 invariant),
+//   * a fault in the health recorder cannot strand the re-stashed pass,
+//   * a retried pass does not re-insert artifacts it already wrote
+//     (idempotent per session/kind/content),
+//   * the success-path probe detail is the evaluator's VERDICT again; only
+//     the PROBER-fallback probe (new behavior by design) carries evidence.
+//
 // Runs the REAL SessionDO class under plain Node: "cloudflare:workers" is
 // stubbed with an inline loader, the fake DurableObjectState drains
 // ctx.waitUntil work deterministically, and the clock is injected so the
@@ -93,7 +107,7 @@ function makeSocket(role: string, clientId: string): FakeSocket {
 
 type StoredMap = Map<string, unknown>;
 
-function makeFakeCtx(sessionKey: string, storage: StoredMap = new Map()) {
+function makeFakeCtx(sessionKey: string, storage: StoredMap = new Map(), putFault?: (key: string) => boolean) {
   const waitUntilTasks: Promise<unknown>[] = [];
   const sockets: FakeSocket[] = [];
   return {
@@ -101,6 +115,7 @@ function makeFakeCtx(sessionKey: string, storage: StoredMap = new Map()) {
     storage: {
       get: async (key: string) => storage.get(key),
       put: async (key: string, value: unknown) => {
+        if (putFault?.(key)) throw new Error(`injected storage.put fault for '${key}'`);
         storage.set(key, value);
       },
       delete: async (key: string) => storage.delete(key),
@@ -128,26 +143,88 @@ function makeFakeCtx(sessionKey: string, storage: StoredMap = new Map()) {
   };
 }
 
+interface FakeArtifactRow {
+  id: string;
+  session_id: string;
+  kind: string;
+  content: string;
+  version: number;
+  superseded_by: string | null;
+  provenance_json: string;
+  created_at: string;
+}
+
+/** D1 stand-in that also emulates the session_plan_artifact TABLE, so the
+ * partial-save-retry check can assert on ROWS instead of statement counts.
+ * Only the statements plan-artifact-store.ts actually issues are interpreted
+ * (SELECT id/version, SELECT id, INSERT, UPDATE superseded_by); everything
+ * else behaves like the bare stub did. */
 function makeFakeDb() {
   const statements: { sql: string; args: unknown[] }[] = [];
+  const artifactRows: FakeArtifactRow[] = [];
+  let artifactInsertCount = 0;
+  let failArtifactInsertNumber: number | null = null;
   function statement(sql: string, args: unknown[] = []): unknown {
     return {
       bind: (...bound: unknown[]) => statement(sql, bound),
-      first: async () => null,
+      first: async () => {
+        if (sql.includes("FROM session_plan_artifact")) {
+          if (sql.includes("SELECT id, version")) {
+            const [sessionId, kind] = args as [string, string];
+            const live = artifactRows.filter((r) => r.session_id === sessionId && r.kind === kind && r.superseded_by === null);
+            return live.length ? live.reduce((a, b) => (a.version >= b.version ? a : b)) : null;
+          }
+          if (sql.includes("SELECT id FROM")) {
+            const [sessionId, kind, content] = args as [string, string, string];
+            return (
+              artifactRows.find((r) => r.session_id === sessionId && r.kind === kind && r.content === content && r.superseded_by === null) ?? null
+            );
+          }
+        }
+        return null;
+      },
       all: async () => ({ results: [] as unknown[] }),
       run: async () => {
         statements.push({ sql, args });
+        if (sql.includes("INSERT INTO session_plan_artifact")) {
+          artifactInsertCount += 1;
+          if (failArtifactInsertNumber !== null && artifactInsertCount === failArtifactInsertNumber) {
+            failArtifactInsertNumber = null; // one-shot partial-save fault; the retry must succeed
+            throw new Error("D1_ERROR: injected artifact-insert fault (partial save)");
+          }
+          const [id, sessionId, kind, content, version, provenanceJson, createdAt] = args as [
+            string,
+            string,
+            string,
+            string,
+            number,
+            string,
+            string,
+          ];
+          artifactRows.push({ id, session_id: sessionId, kind, content, version, superseded_by: null, provenance_json: provenanceJson, created_at: createdAt });
+        } else if (sql.includes("UPDATE session_plan_artifact SET superseded_by")) {
+          const [newId, existingId] = args as [string, string];
+          const row = artifactRows.find((r) => r.id === existingId);
+          if (row) row.superseded_by = newId;
+        }
         return { success: true };
       },
     };
   }
-  return { prepare: (sql: string) => statement(sql), __statements: statements };
+  return {
+    prepare: (sql: string) => statement(sql),
+    __statements: statements,
+    __artifactRows: artifactRows,
+    __failArtifactInsertOnce: (n: number) => {
+      failArtifactInsertNumber = n;
+    },
+  };
 }
 
-type HarnessOptions = { sessionKey?: string; storage?: StoredMap };
+type HarnessOptions = { sessionKey?: string; storage?: StoredMap; putFault?: (key: string) => boolean };
 
 function makeHarness(options: HarnessOptions = {}) {
-  const ctx = makeFakeCtx(options.sessionKey ?? "guide-failure-test", options.storage);
+  const ctx = makeFakeCtx(options.sessionKey ?? "guide-failure-test", options.storage, options.putFault);
   const db = makeFakeDb();
   const env = {
     ANTHROPIC_API_KEY: "test-key-not-a-real-secret",
@@ -643,6 +720,7 @@ await check("no-regression: thin verdict still publishes a probe message", async
   assert.equal(log.length, 1, "one guide message published");
   assert.equal(log[0].kind, "probe", "thin verdict → PROBER probe");
   assert.ok(log[0].text.includes("roof repair"), "probe names the room's specifics");
+  assert.equal(log[0].detail, "thin", "success-path probe detail is the evaluator's VERDICT (pre-wave behavior — wave 1.1 had smuggled evidence in here)");
 });
 
 // ==============================================================================
@@ -965,9 +1043,310 @@ await check("evaluator: a PROBER failure still publishes a fallback probe built 
   assert.equal(log.length, 1, "the paid evaluator verdict must not be discarded (pre-fix: zero messages)");
   assert.equal(probes.length, 1, "a deterministic probe fallback is published");
   assert.ok(probes[0].text.includes("(weakest area: specific)"), `the fallback is built from the evaluator's own output: ${probes[0].text}`);
-  assert.equal(probes[0].detail, "scripted evidence", "and its detail keeps the evaluator's evidence");
+  assert.equal(probes[0].detail, "scripted evidence", "the PROBER-fallback probe keeps the evaluator's evidence (new behavior by design)");
   assert.equal(fallbackLines.length, 1, "the PROBER degradation is observable in the logs");
   assert.equal(llm.countFor("EVALUATOR"), 1, "exactly one paid evaluator call — the fallback spends nothing new");
+});
+
+// ==============================================================================
+// 14) CRITIC wave 1.2 (A) MED: a provenance verification failure is a designed
+//     HARD STOP — it must NOT be re-stashed. Pre-fix every alarm re-spent a
+//     SYNTHESIZER call and re-published the notice (measured: ~14 attempts and
+//     ~14 room-visible notices over one simulated hour; the log's 25-message
+//     cap meant those notices evicted the room's real guide history).
+// ==============================================================================
+await check("synthesis: a provenance hard stop never re-stashes or re-notices (one notice, no re-spend)", async () => {
+  resetClock();
+  const { inst, ctx } = makeHarness({ sessionKey: "provenance-hard-stop" });
+  const llm = new ScriptedLlmClient((system) => {
+    if (system.includes("SYNTHESIZER")) return fabricatedSynthesisJson();
+    if (system.includes("EVALUATOR")) return evaluatorVerdictJson("", "on_track");
+    if (system.includes("PACER")) return JSON.stringify({ message_to_room: "Keep it tight.", rationale: "scripted" });
+    throw new Error(`unexpected agent prompt: ${system.slice(0, 48)}`);
+  });
+  injectLlm(inst, llm);
+  const phone = makeSocket("phone", "hs-phone");
+  const screen = makeSocket("screen", "hs-screen");
+  const notices = () =>
+    (readState(inst).guideLog ?? []).filter((m) => m.kind === "synthesis" && m.text.includes("failed source verification")).length;
+
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "hs-0", content: SUBMISSION_ONE }));
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "hs-1", content: SUBMISSION_TWO }));
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  await ctx.__drain();
+  assert.equal(llm.countFor("SYNTHESIZER"), 1, "the boundary pass ran once and hit the hard stop");
+  assert.equal(notices(), 1, "the room is told honestly, exactly once");
+  assert.deepEqual(readPending(inst), [], "a hard stop must not be re-stashed (pre-fix: money pump)");
+
+  // An hour of alarms: a provenance failure can never pass on retry, so no
+  // attempt may re-spend — and no duplicate notice may evict guide history.
+  const cap = captureConsole();
+  try {
+    for (let i = 0; i < 120; i++) {
+      advanceClock(30_000);
+      await inst.alarm();
+      await ctx.__drain();
+    }
+  } finally {
+    cap.restore();
+  }
+  console.log(
+    `  [measured] after 60 min: synthesizer attempts=${llm.countFor("SYNTHESIZER")}; notices=${notices()}; pending=${JSON.stringify(readPending(inst))}`,
+  );
+  assert.equal(llm.countFor("SYNTHESIZER"), 1, "a provenance failure can never pass on retry — every re-spend was pure waste");
+  assert.equal(notices(), 1, "exactly one honest notice across the hour (retries must not re-publish it)");
+  assert.deepEqual(readPending(inst), [], "and nothing is pending an hour later");
+});
+
+// ==============================================================================
+// 15) CRITIC wave 1.2 (A, second half): the failure notice is deduped by
+//     segment key across retries — a same-segment boundary re-run must not
+//     re-publish it.
+// ==============================================================================
+await check("synthesis: a same-segment boundary re-run never re-publishes the failure notice", async () => {
+  resetClock();
+  const { inst, ctx } = makeHarness({ sessionKey: "provenance-notice-dedupe" });
+  const llm = new ScriptedLlmClient((system) => {
+    if (system.includes("SYNTHESIZER")) return fabricatedSynthesisJson();
+    if (system.includes("EVALUATOR")) return evaluatorVerdictJson("", "on_track");
+    if (system.includes("PACER")) return JSON.stringify({ message_to_room: "Keep it tight.", rationale: "scripted" });
+    throw new Error(`unexpected agent prompt: ${system.slice(0, 48)}`);
+  });
+  injectLlm(inst, llm);
+  const phone = makeSocket("phone", "nd-phone");
+  const screen = makeSocket("screen", "nd-screen");
+  const notices = () =>
+    (readState(inst).guideLog ?? []).filter((m) => m.kind === "synthesis" && m.text.includes("failed source verification")).length;
+
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "nd-0", content: SUBMISSION_ONE }));
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "nd-1", content: SUBMISSION_TWO }));
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  await ctx.__drain();
+  assert.equal(notices(), 1, "precondition: the first boundary published its honest notice");
+
+  // The leader re-enters and leaves the same segment again (a normal
+  // mis-advance correction). The boundary pass runs once more after the
+  // backoff, but the room must not see a second copy of the notice.
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "backtrack_segment" }));
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  assert.deepEqual(readPending(inst), [SEGMENT], "precondition: the re-run is stashed while the synthesis backoff is open");
+  advanceClock(61_000);
+  await inst.alarm();
+  await ctx.__drain();
+  console.log(
+    `  [measured] synthesizer attempts=${llm.countFor("SYNTHESIZER")}; notices=${notices()}; pending=${JSON.stringify(readPending(inst))}`,
+  );
+  assert.equal(llm.countFor("SYNTHESIZER"), 2, "the boundary genuinely re-ran (the dedupe check would be vacuous otherwise)");
+  assert.equal(notices(), 1, "the same segment's failure notice is published at most once per boundary episode");
+  assert.deepEqual(readPending(inst), [], "the re-run's hard stop does not re-stash either");
+});
+
+// ==============================================================================
+// 16) CRITIC wave 1.2 (B) LOW-MED: the in-flight skip must only cover the
+//     material the in-flight pass actually snapshotted. Probe B pre-fix: hold
+//     welcome's synthesis, backtrack to welcome, add a NEW submission,
+//     re-advance → the boundary was skipped, the new text reached no synthesis
+//     prompt at all, and pending ended empty.
+// ==============================================================================
+await check("boundary synthesis: a same-segment boundary with NEW submissions is still synthesized", async () => {
+  resetClock();
+  const { inst, ctx } = makeHarness({ sessionKey: "boundary-new-material" });
+  const newSubmission = "The boiler replacement quote came in at $9k.";
+  let resolveFirst: ((text: string) => void) | undefined;
+  const firstPending = new Promise<string>((resolve) => {
+    resolveFirst = resolve;
+  });
+  let synthesisCalls = 0;
+  const llm = new ScriptedLlmClient((system) => {
+    if (system.includes("SYNTHESIZER")) {
+      synthesisCalls += 1;
+      if (synthesisCalls === 1) return firstPending; // pass #1: held open → in flight
+      return JSON.stringify({
+        artifacts: [
+          {
+            kind: "risk",
+            content: "A boiler replacement quote of $9k is now on the table.",
+            provenance: [{ type: "submission", index: 2, quote: "boiler replacement quote came in at $9k" }],
+          },
+        ],
+      });
+    }
+    if (system.includes("EVALUATOR")) return evaluatorVerdictJson("", "on_track");
+    if (system.includes("PACER")) return JSON.stringify({ message_to_room: "Keep it tight.", rationale: "scripted" });
+    throw new Error(`unexpected agent prompt: ${system.slice(0, 48)}`);
+  });
+  injectLlm(inst, llm);
+  const phone = makeSocket("phone", "nm-phone");
+  const screen = makeSocket("screen", "nm-screen");
+
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "nm-0", content: SUBMISSION_ONE }));
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "nm-1", content: SUBMISSION_TWO }));
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  await flush();
+  assert.equal(llm.countFor("SYNTHESIZER"), 1, "precondition: welcome's synthesis is in flight (held open)");
+
+  // Backtrack into welcome, add genuinely NEW material, leave again.
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "backtrack_segment" }));
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "nm-2", content: newSubmission }));
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  assert.deepEqual(readPending(inst), [SEGMENT], "material the in-flight pass never snapshotted must stash the boundary, not vanish");
+
+  resolveFirst!(validSynthesisJson()); // pass #1 (old snapshot) settles…
+  await ctx.__drain(); // …and its finally() runs the stashed pass with the new material
+  await inst.alarm();
+  await ctx.__drain();
+
+  const promptsWithNewMaterial = llm.calls.filter(
+    (call) => call.system.includes("SYNTHESIZER") && call.content.includes("boiler replacement"),
+  ).length;
+  console.log(
+    `  [measured] synthesizer attempts=${llm.countFor("SYNTHESIZER")}; prompts carrying the new submission=${promptsWithNewMaterial}; pending=${JSON.stringify(readPending(inst))}`,
+  );
+  assert.equal(llm.countFor("SYNTHESIZER"), 2, "the new boundary is synthesized (exactly one additional pass)");
+  assert.equal(promptsWithNewMaterial, 1, "the new submission reaches a synthesis prompt exactly once");
+  assert.deepEqual(readPending(inst), [], "nothing left pending after the stashed pass runs");
+});
+
+// ==============================================================================
+// 17) Round-1 invariant (mutation x) MUST stay pinned: a same-segment boundary
+//     with NO new material since the in-flight pass began is still skipped —
+//     no second paid pass.
+// ==============================================================================
+await check("boundary synthesis: a same-segment re-advance with no new material is still skipped", async () => {
+  resetClock();
+  const { inst, ctx } = makeHarness({ sessionKey: "boundary-covered-no-new" });
+  let resolveFirst: ((text: string) => void) | undefined;
+  const firstPending = new Promise<string>((resolve) => {
+    resolveFirst = resolve;
+  });
+  let synthesisCalls = 0;
+  const llm = new ScriptedLlmClient((system) => {
+    if (system.includes("SYNTHESIZER")) {
+      synthesisCalls += 1;
+      return synthesisCalls === 1 ? firstPending : validSynthesisJson();
+    }
+    if (system.includes("EVALUATOR")) return evaluatorVerdictJson("", "on_track");
+    if (system.includes("PACER")) return JSON.stringify({ message_to_room: "Keep it tight.", rationale: "scripted" });
+    throw new Error(`unexpected agent prompt: ${system.slice(0, 48)}`);
+  });
+  injectLlm(inst, llm);
+  const phone = makeSocket("phone", "cn-phone");
+  const screen = makeSocket("screen", "cn-screen");
+
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "cn-0", content: SUBMISSION_ONE }));
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "cn-1", content: SUBMISSION_TWO }));
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  await flush();
+  assert.equal(llm.countFor("SYNTHESIZER"), 1, "precondition: welcome's synthesis is in flight (held open)");
+
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "backtrack_segment" }));
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  assert.deepEqual(readPending(inst), [], "no new material since the snapshot → the in-flight pass covers this boundary → nothing stashed");
+
+  resolveFirst!(validSynthesisJson());
+  await ctx.__drain();
+  await inst.alarm();
+  await ctx.__drain();
+  const synthMessages = (readState(inst).guideLog ?? []).filter((m) => m.kind === "synthesis" && m.segmentKey === SEGMENT);
+  console.log(
+    `  [measured] synthesizer attempts=${llm.countFor("SYNTHESIZER")}; room messages=${synthMessages.length}; pending=${JSON.stringify(readPending(inst))}`,
+  );
+  assert.equal(llm.countFor("SYNTHESIZER"), 1, "no second paid pass for a boundary the running pass already covers");
+  assert.equal(synthMessages.length, 1, "and exactly one synthesis message reaches the room");
+  assert.deepEqual(readPending(inst), [], "nothing stashed");
+});
+
+// ==============================================================================
+// 18) CRITIC wave 1.2 (C) LOW: a double fault — the synthesis attempt fails
+//     AND the failure-recording storage.put faults — must not strand the pass.
+//     Pre-fix recordGuideFailure threw before the re-stash (measured
+//     pending=[] after drain: the boundary was lost).
+// ==============================================================================
+await check("synthesis: a health-recorder fault cannot strand the re-stashed pass (failure still logged)", async () => {
+  resetClock();
+  const { inst, ctx } = makeHarness({ sessionKey: "synthesis-health-fault", putFault: (key) => key === "guideHealth" });
+  const llm = new ScriptedLlmClient((system) => {
+    if (system.includes("SYNTHESIZER")) throw new LlmTimeoutError(20_000, "claude-opus-4-6");
+    if (system.includes("EVALUATOR")) return evaluatorVerdictJson("", "on_track");
+    if (system.includes("PACER")) return JSON.stringify({ message_to_room: "Keep it tight.", rationale: "scripted" });
+    throw new Error(`unexpected agent prompt: ${system.slice(0, 48)}`);
+  });
+  injectLlm(inst, llm);
+  const phone = makeSocket("phone", "hf-phone");
+  const screen = makeSocket("screen", "hf-screen");
+  const cap = captureConsole();
+  try {
+    await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "hf-0", content: SUBMISSION_ONE }));
+    await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "hf-1", content: SUBMISSION_TWO }));
+    await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+    await ctx.__drain();
+  } finally {
+    cap.restore();
+  }
+  const synthErrors = cap.errors.filter((line) => line.includes("[guide-error] agent=synthesis"));
+  console.log(
+    `  [measured] pending=${JSON.stringify(readPending(inst))}; synthesis errorLogs=${synthErrors.length}; consecutive=${readHealth(inst).synthesis?.consecutiveFailures}`,
+  );
+  assert.deepEqual(readPending(inst), [SEGMENT], "the re-stash must happen BEFORE the faulting failure-recording put");
+  assert.ok(synthErrors.length >= 1, "the failure is still logged despite the recorder fault");
+  assert.ok(synthErrors[0].includes("consecutive=1"), "and counted (in-memory health updates before the persist fault)");
+  assert.equal(Reflect.get(inst, "guideWorkInFlight"), false, "the guide loop is not wedged by the fault");
+  assert.equal(Reflect.get(inst, "synthesisInFlightKey"), null, "and the in-flight marker is cleared");
+});
+
+// ==============================================================================
+// 19) CRITIC wave 1.2 (D) LOW: artifacts must not duplicate on a partial-save
+//     retry. Pass #1 saves artifact A, faults on B, is re-stashed; the retry
+//     re-inserted A (this is how the round-1 duplicate rows appeared). The
+//     write must be idempotent per (session, kind, content).
+// ==============================================================================
+await check("synthesis: a retry after a partial artifact save writes no duplicate rows", async () => {
+  resetClock();
+  const { inst, ctx, db } = makeHarness({ sessionKey: "artifact-partial-retry" });
+  const artifactA = "The roof repair is due in March and carries a $14k cost.";
+  const artifactB = "Maintenance communication is a named driver in the room's input.";
+  const llm = new ScriptedLlmClient((system) => {
+    if (system.includes("SYNTHESIZER")) {
+      return JSON.stringify({
+        artifacts: [
+          { kind: "risk", content: artifactA, provenance: [{ type: "submission", index: 0, quote: "roof repair is due in March" }] },
+          { kind: "driver", content: artifactB, provenance: [{ type: "submission", index: 1, quote: "communicate better about maintenance" }] },
+        ],
+      });
+    }
+    if (system.includes("EVALUATOR")) return evaluatorVerdictJson("", "on_track");
+    if (system.includes("PACER")) return JSON.stringify({ message_to_room: "Keep it tight.", rationale: "scripted" });
+    throw new Error(`unexpected agent prompt: ${system.slice(0, 48)}`);
+  });
+  injectLlm(inst, llm);
+  const phone = makeSocket("phone", "pr-phone");
+  const screen = makeSocket("screen", "pr-screen");
+
+  db.__failArtifactInsertOnce(2); // pass #1: A saves, B's INSERT faults (a partial save)
+
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "pr-0", content: SUBMISSION_ONE }));
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "pr-1", content: SUBMISSION_TWO }));
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  await ctx.__drain();
+
+  const rowsAfterPartial = db.__artifactRows.filter((r) => r.session_id === "artifact-partial-retry");
+  assert.equal(rowsAfterPartial.length, 1, "precondition: the first artifact was saved before the fault");
+  assert.deepEqual(readPending(inst), [SEGMENT], "precondition: the failed pass was re-stashed for retry");
+
+  advanceClock(61_000); // past the failure backoff
+  await inst.alarm();
+  await ctx.__drain();
+
+  const rows = db.__artifactRows.filter((r) => r.session_id === "artifact-partial-retry");
+  const countFor = (content: string) => rows.filter((r) => r.content === content).length;
+  console.log(
+    `  [measured] artifact rows before retry=${rowsAfterPartial.length}, after retry=${rows.length}; A=${countFor(artifactA)} B=${countFor(artifactB)}`,
+  );
+  assert.equal(rows.length, 2, "one row per artifact — the retry must not re-insert what pass #1 already wrote");
+  assert.equal(countFor(artifactA), 1, "no duplicate for the already-saved artifact");
+  assert.equal(countFor(artifactB), 1, "and the faulted artifact is written exactly once");
+  const synthMessages = (readState(inst).guideLog ?? []).filter((m) => m.kind === "synthesis" && m.segmentKey === SEGMENT);
+  assert.equal(synthMessages.length, 1, "the recovered pass reaches the room once");
 });
 
 Date.now = REAL_NOW;

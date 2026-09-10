@@ -8,6 +8,11 @@
 // (node:sqlite) wearing the D1 interface, with the repo's migrations applied
 // in order — so the throttle's persistence, its cooldown window and its
 // per-step key are the production SQL, not a stub standing in for it.
+//
+// Wave 1.2 adds the write-boundary checks near the bottom: the COACH input
+// caps (initiative title 200 / step description 500) must cut on a Unicode
+// boundary, log the cut exactly once with the omitted count, and report it in
+// the 201 without changing the existing { id } contract for within-cap text.
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
@@ -16,7 +21,7 @@ import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import type { Env } from "../src/index.ts";
 import { handleProgramRoute } from "../src/program/routes.ts";
 import { COACH_NUDGE_COOLDOWN_MS, MAX_NUDGE_PROMPT_CHARS, generateNudgesForProgram } from "../src/program/coach.ts";
-import { MAX_STEP_DESCRIPTION_CHARS } from "../src/program/initiatives.ts";
+import { MAX_INITIATIVE_TITLE_CHARS, MAX_STEP_DESCRIPTION_CHARS, truncateChars } from "../src/program/initiatives.ts";
 import { HeuristicFakeLlmClient } from "../src/guide-engine/testing/fake-llm-client.ts";
 
 // node:sqlite still flag-warns as experimental on Node 22. The suite has
@@ -181,7 +186,7 @@ class MissingCoachNudgeTableD1 {
 async function callAddStep(
   initiativeId: string,
   body: Record<string, unknown>,
-): Promise<{ status: number; json: { id?: string; error?: string } }> {
+): Promise<{ status: number; json: { id?: string; truncated?: boolean; storedLength?: number; error?: string } }> {
   const url = new URL(`https://groundwork.test/initiative/${initiativeId}/step`);
   const request = new Request(url, {
     method: "POST",
@@ -194,7 +199,63 @@ async function callAddStep(
   });
   const response = await handleProgramRoute(request, env, url);
   assert.ok(response, "the program router must handle POST /initiative/:id/step");
-  return { status: response.status, json: (await response.json()) as { id?: string; error?: string } };
+  return {
+    status: response.status,
+    json: (await response.json()) as { id?: string; truncated?: boolean; storedLength?: number; error?: string },
+  };
+}
+
+/** The New initiative form: POST /program/:id/initiative, dev auth headers. */
+async function callCreateInitiative(
+  programId: string,
+  body: Record<string, unknown>,
+): Promise<{ status: number; json: { id?: string; truncated?: boolean; storedLength?: number; error?: string } }> {
+  const url = new URL(`https://groundwork.test/program/${programId}/initiative`);
+  const request = new Request(url, {
+    method: "POST",
+    headers: {
+      "X-Groundwork-Dev-User": LEADER_EMAIL,
+      "X-Groundwork-Dev-Sub": "dev-sub-0001",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const response = await handleProgramRoute(request, env, url);
+  assert.ok(response, "the program router must handle POST /program/:id/initiative");
+  return {
+    status: response.status,
+    json: (await response.json()) as { id?: string; truncated?: boolean; storedLength?: number; error?: string },
+  };
+}
+
+/** Pinned deliberately: the write boundary must log every cut under a
+ * greppable [program-truncation] prefix, same convention as the guide loop's
+ * [guide-error] lines. If the prefix is ever renamed, update this pin in the
+ * same change — the grep-ability is the contract, not the word. */
+const TRUNCATION_LOG_PREFIX_PINNED = "[program-truncation]";
+
+function truncationLogLines(lines: string[]): string[] {
+  return lines.filter((line) => line.includes(TRUNCATION_LOG_PREFIX_PINNED));
+}
+
+/** Runs `fn` with console.log/warn/error captured, so a check can assert what
+ * the server logged without letting those lines into the test output. */
+async function captureConsole<T>(fn: () => Promise<T> | T): Promise<{ result: T; lines: string[] }> {
+  const lines: string[] = [];
+  const record = (...args: unknown[]): void => {
+    lines.push(args.map((arg) => String(arg)).join(" "));
+  };
+  const original = { log: console.log, warn: console.warn, error: console.error };
+  console.log = record;
+  console.warn = record;
+  console.error = record;
+  try {
+    return { result: await fn(), lines };
+  } finally {
+    console.log = original.log;
+    console.warn = original.warn;
+    console.error = original.error;
+  }
 }
 
 async function stepDescription(stepId: string): Promise<string | null> {
@@ -203,6 +264,14 @@ async function stepDescription(stepId: string): Promise<string | null> {
     .bind(stepId)
     .first<{ description: string }>();
   return row?.description ?? null;
+}
+
+async function initiativeTitle(initiativeId: string): Promise<string | null> {
+  const row = await db
+    .prepare(`SELECT title FROM initiative WHERE id = ?1`)
+    .bind(initiativeId)
+    .first<{ title: string }>();
+  return row?.title ?? null;
 }
 
 /** Records the exact user message of every nudge prompt that reaches a model. */
@@ -476,6 +545,160 @@ await check("the template fallback stays bounded for an oversized stored row", a
   );
   assert.ok(!message.includes("FALLBACK_TAIL_MARKER"), "text past the ceiling must not reach the dashboard");
   assert.equal(await stepDescription("s7"), OVERSIZED_FALLBACK, "the fallback path must not mutate the stored row either");
+});
+
+// --- write-boundary truncation: Unicode-safe, observable, honest -----------
+//
+// Wave 1.2. The write boundary (src/program/initiatives.ts) cuts text at the
+// cap, but the cut used to be silent and could land between the two halves of
+// a surrogate pair, storing ill-formed UTF-16. The checks below pin the three
+// fixes: the cut is surrogate-safe (a valid Unicode prefix), it is logged once
+// with the omitted character count, and the 201 tells the caller it happened.
+
+/** Index of the first ill-formed (unpaired) surrogate code unit, or null when
+ * the string is well-formed UTF-16. */
+function firstLoneSurrogate(text: string): number | null {
+  for (let i = 0; i < text.length; i += 1) {
+    const unit = text.charCodeAt(i);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = text.charCodeAt(i + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return i;
+      i += 1; // a complete pair; skip its low half
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      return i; // a low surrogate with no high half before it
+    }
+  }
+  return null;
+}
+
+await check("truncateChars never splits a surrogate pair and returns a prefix of the input", () => {
+  // "ab😀cd": the emoji occupies code units 2 and 3; a cap of 3 lands inside it.
+  assert.equal(
+    truncateChars("ab😀cd", 3),
+    "ab",
+    "a cap landing between the halves of a pair must drop the orphaned high surrogate, not store half a character",
+  );
+  assert.equal(truncateChars("ab😀cd", 4), "ab😀", "a cap landing after the pair must keep it whole");
+  assert.equal(truncateChars("ab😀cd", 6), "ab😀cd", "within-cap text is returned byte for byte");
+  for (const [input, max] of [["ab😀cd", 3], ["ab😀cd", 4], ["🙂🙂🙂", 3], ["🙂🙂🙂", 1]] as const) {
+    const out = truncateChars(input, max);
+    assert.ok(out.length <= max, `the cap must still hold for ${JSON.stringify(input)} at ${max}`);
+    assert.equal(
+      firstLoneSurrogate(out),
+      null,
+      `truncateChars(${JSON.stringify(input)}, ${max}) must return well-formed UTF-16, got ${JSON.stringify(out)}`,
+    );
+    assert.ok(input.startsWith(out), "the result must be a prefix of the input");
+  }
+});
+
+await seedProgram({ orgId: "org-6", programId: "p6", initiativeId: "i6", initiativeTitle: "Keep the welcome process honest" });
+
+await check("a description with an emoji straddling the write boundary stores a valid Unicode prefix", async () => {
+  // 499 ASCII chars, then the emoji's two halves land exactly across the
+  // 500-char cap. The pre-fix slice kept the high half — ill-formed UTF-16.
+  const straddling = "A".repeat(MAX_STEP_DESCRIPTION_CHARS - 1) + "😀" + "TAIL_AFTER_THE_CUT";
+  const posted = await callAddStep("i6", { description: straddling });
+  assert.equal(posted.status, 201);
+  const stored = await stepDescription(posted.json.id!);
+  assert.ok(stored !== null, "the step row must exist");
+  assert.equal(
+    stored,
+    "A".repeat(MAX_STEP_DESCRIPTION_CHARS - 1),
+    "the cut must back off one code unit rather than store half a surrogate pair",
+  );
+  assert.equal(firstLoneSurrogate(stored), null, "the stored value must be well-formed UTF-16");
+  assert.ok(straddling.startsWith(stored), "the stored value must be a prefix of the submission");
+});
+
+// ~600 KB, the scale an authenticated member can POST. The tail marker lets
+// any assertion prove the cut was at the cap, not somewhere arbitrary.
+const OVERSIZED_STEP_BODY = "R".repeat(600_000) + "OMITTED_TAIL_MARKER";
+
+await check("an oversized step POST reports the cut in the 201 and logs it exactly once", async () => {
+  const { result: posted, lines } = await captureConsole(() =>
+    callAddStep("i6", { description: OVERSIZED_STEP_BODY }),
+  );
+  assert.equal(posted.status, 201, "the cap must truncate, not reject");
+  assert.ok(posted.json.id, "the step must still be created");
+  assert.equal(
+    posted.json.truncated,
+    true,
+    "the 201 must carry a truncation signal — a caller that only sees {id} cannot tell it lost text",
+  );
+  assert.equal(
+    posted.json.storedLength,
+    MAX_STEP_DESCRIPTION_CHARS,
+    "the 201 must carry the length actually stored",
+  );
+  assert.equal(
+    await stepDescription(posted.json.id!),
+    OVERSIZED_STEP_BODY.slice(0, MAX_STEP_DESCRIPTION_CHARS),
+    "the write-path cap must still hold",
+  );
+
+  const truncations = truncationLogLines(lines);
+  assert.equal(
+    truncations.length,
+    1,
+    `the cut must be logged exactly once per request — got ${truncations.length} line(s)`,
+  );
+  assert.ok(
+    truncations[0]?.includes(`omitted=${OVERSIZED_STEP_BODY.length - MAX_STEP_DESCRIPTION_CHARS}`),
+    `the log must carry the omitted character count (got: ${truncations[0] ?? "nothing logged"})`,
+  );
+  assert.ok(
+    truncations[0]?.includes(`stored=${MAX_STEP_DESCRIPTION_CHARS}`),
+    "the log must say how much was kept",
+  );
+});
+
+const WITHIN_CAP_STEP_BODY = "C".repeat(MAX_STEP_DESCRIPTION_CHARS - 20);
+
+await check("a within-cap step POST is unchanged: no signal, no log, stored byte-identical", async () => {
+  const { result: posted, lines } = await captureConsole(() =>
+    callAddStep("i6", { description: WITHIN_CAP_STEP_BODY }),
+  );
+  assert.equal(posted.status, 201);
+  assert.deepEqual(
+    Object.keys(posted.json),
+    ["id"],
+    "a within-cap POST must keep the exact existing response shape — the signal is additive and only for cuts",
+  );
+  assert.equal(
+    await stepDescription(posted.json.id!),
+    WITHIN_CAP_STEP_BODY,
+    "within-cap text must be stored byte for byte",
+  );
+  assert.equal(
+    truncationLogLines(lines).length,
+    0,
+    "a within-cap write must not log anything that greps like a truncation",
+  );
+});
+
+const OVERSIZED_TITLE = "T".repeat(1_000) + "TITLE_TAIL_MARKER";
+
+await check("an oversized initiative title is cut, reported and logged the same way", async () => {
+  const { result: created, lines } = await captureConsole(() =>
+    callCreateInitiative("p6", { title: OVERSIZED_TITLE, whyNow: "The welcome process keeps slipping." }),
+  );
+  assert.equal(created.status, 201, "the cap must truncate, not reject");
+  assert.ok(created.json.id, "the initiative must still be created");
+  assert.equal(created.json.truncated, true, "the 201 must carry the truncation signal for the title too");
+  assert.equal(created.json.storedLength, MAX_INITIATIVE_TITLE_CHARS, "the 201 must carry the stored title length");
+  assert.equal(
+    await initiativeTitle(created.json.id!),
+    "T".repeat(MAX_INITIATIVE_TITLE_CHARS),
+    "the title cap must hold on the write path",
+  );
+
+  const truncations = truncationLogLines(lines);
+  assert.equal(truncations.length, 1, `the title cut must be logged exactly once — got ${truncations.length} line(s)`);
+  assert.ok(
+    truncations[0]?.includes(`omitted=${OVERSIZED_TITLE.length - MAX_INITIATIVE_TITLE_CHARS}`),
+    `the log must carry the omitted character count (got: ${truncations[0] ?? "nothing logged"})`,
+  );
 });
 
 // --- deploy order: missing migration must fail soft, not 500 ----------------
