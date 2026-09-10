@@ -1,4 +1,5 @@
 import type { Env } from "../index.ts";
+import { capTranscriptWindow } from "../session-protocol.ts";
 
 // Build plan §3.4 step 5: "Guide reads the rolling transcript window
 // (current segment + prior segment) when evaluating." ~60s of lag between
@@ -24,7 +25,10 @@ async function chunkTextForSegment(env: Env, sessionId: string, segmentKey: stri
 /** Concatenates transcribed text for the current segment plus the segment
  * immediately before it. `priorSegmentKey` is undefined for a lab's first
  * segment. Chunks with no transcript yet (transcription still in flight,
- * or failed — see transcribe.ts) are silently skipped, not blocked on. */
+ * or failed — see transcribe.ts) are silently skipped, not blocked on.
+ * The result is tail-capped to the prompt budget: a long meeting's window
+ * is unbounded by nature, and the newest speech is the material a prompt
+ * actually needs (guide-hardening wave 1, bug #3). */
 export async function getRollingTranscriptWindow(
   env: Env,
   sessionId: string,
@@ -38,5 +42,5 @@ export async function getRollingTranscriptWindow(
   }
   const current = await chunkTextForSegment(env, sessionId, currentSegmentKey);
   if (current) parts.push(current);
-  return parts.join("\n\n");
+  return capTranscriptWindow(parts.join("\n\n"));
 }

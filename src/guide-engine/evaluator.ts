@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { SegmentSpec } from "./segment-schema.ts";
 import type { LlmClient } from "./llm-client.ts";
 import { MODELS } from "./models.ts";
+import { applyPromptBudget, renderPromptSubmissions } from "../session-protocol.ts";
 
 // EVALUATOR — build plan §5.3. Reads submissions + transcript against the
 // segment's rubric. THE RUBRIC IS PASSED IN AS DATA, never baked into the
@@ -47,17 +48,26 @@ const EVALUATOR_SYSTEM_PROMPT = [
   'Respond with strict JSON only, no prose: {"verdict": string, "per_criterion_scores": [{"id": string, "score": number, "note": string}], "weakest_criterion": string, "evidence": string}.',
 ].join("\n");
 
-function buildEvaluatorUserContent(input: EvaluatorInput): string {
-  return [
-    `Segment objective: ${input.segment.objective}`,
-    "Rubric (JSON, authoritative for this segment only):",
-    JSON.stringify(input.segment.rubric, null, 2),
-    `Submissions (${input.submissions.length}):`,
-    input.submissions.map((s, i) => `${i + 1}. ${s}`).join("\n") || "(none)",
-    input.transcriptWindow ? `Discussion transcript (current + prior segment):\n${input.transcriptWindow}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+export function buildEvaluatorUserContent(input: EvaluatorInput): string {
+  return applyPromptBudget({
+    submissions: input.submissions,
+    transcript: input.transcriptWindow,
+    render: ({ submissions, transcript, submissionsElided }) => {
+      const heading =
+        submissionsElided > 0
+          ? `Submissions (${submissions.length} of ${submissions.length + submissionsElided}, newest kept):`
+          : `Submissions (${submissions.length}):`;
+      return [
+        `Segment objective: ${input.segment.objective}`,
+        "Rubric (JSON, authoritative for this segment only):",
+        JSON.stringify(input.segment.rubric, null, 2),
+        renderPromptSubmissions(heading, submissions, submissionsElided, (entry, position) => `${position + 1}. ${entry.text}`),
+        transcript ? `Discussion transcript (current + prior segment):\n${transcript}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+    },
+  }).content;
 }
 
 export async function runEvaluator(input: EvaluatorInput, llm: LlmClient): Promise<EvaluatorOutput> {

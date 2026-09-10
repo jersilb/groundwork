@@ -2,8 +2,7 @@ import type { Env } from "../index.ts";
 import { createOrg, createUser, type CreateOrgBody, type CreateUserBody } from "./org.ts";
 import { createProgram, scheduleLabSession, completeLabSession, recordConsent, getProgramState, openLabSession, LabSequenceError } from "./program.ts";
 import { createInitiative, addInitiativeStep, getOverdueSteps, type CreateInitiativeBody } from "./initiatives.ts";
-import { generateNudge, fallbackNudge } from "./coach.ts";
-import { AnthropicLlmClient } from "../guide-engine/llm-client.ts";
+import { generateNudgesForProgram } from "./coach.ts";
 import { createReviewCycle, completeReviewCycle, computeHealthSnapshot } from "./review-cycle.ts";
 import { upsertOrgCreator, requireOrgMember, requireProgramMember, getAuthFromRequest, type AuthContext } from "../auth/cloudflare-access.ts";
 
@@ -186,22 +185,9 @@ async function route(request: Request, env: Env, url: URL): Promise<Response | n
     const auth = getAuth(request);
     if (!auth) return authRequired();
     if (!(await requireProgramMember(env, auth, m[1]))) return forbidden();
-    const steps = await getOverdueSteps(env, m[1]);
-    const llm = env.ANTHROPIC_API_KEY ? new AnthropicLlmClient(env.ANTHROPIC_API_KEY) : null;
-    const nudges = [];
-    for (const step of steps) {
-      const daysOverdue = Math.max(0, Math.floor((Date.now() - new Date(step.due_date).getTime()) / 86_400_000));
-      // One malformed LLM response must not 500 the whole endpoint —
-      // per-step isolation, with the deterministic template as the floor.
-      let nudge: { message: string };
-      try {
-        nudge = llm ? await generateNudge(step, llm) : fallbackNudge(step, daysOverdue);
-      } catch {
-        nudge = fallbackNudge(step, daysOverdue);
-      }
-      nudges.push({ stepId: step.step_id, ...nudge });
-    }
-    return Response.json({ nudges, personalized: Boolean(llm) });
+    // The dashboard calls this on every load, so the throttle and dedupe live
+    // server-side in D1 (see coach.ts) — a refresh cannot re-spend the budget.
+    return Response.json(await generateNudgesForProgram(env, m[1]));
   }
 
   m = p.match(/^\/program\/([A-Za-z0-9_-]+)\/review-cycle$/);

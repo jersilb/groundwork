@@ -22,7 +22,7 @@ import {
   synthesizeSegment,
   type GuideContext,
 } from "./guide-engine/session-guide.ts";
-import { AnthropicLlmClient } from "./guide-engine/llm-client.ts";
+import { AnthropicLlmClient, type LlmClient } from "./guide-engine/llm-client.ts";
 import { ProvenanceVerificationError } from "./guide-engine/synthesizer.ts";
 import { getRollingTranscriptWindow } from "./audio/transcript-window.ts";
 import { saveArtifact } from "./synthesis/plan-artifact-store.ts";
@@ -42,6 +42,38 @@ import {
 } from "./session-runtime.ts";
 
 const CHECKPOINT_INTERVAL_MS = 30_000;
+/** Stable log prefixes for guide telemetry — grep-able in production logs
+ * (wrangler tail / Workers Logs), one line per failure and per verdict. */
+const GUIDE_ERROR_LOG_PREFIX = "[guide-error]";
+const GUIDE_VERDICT_LOG_PREFIX = "[guide-verdict]";
+/** Backoff before retrying a guide agent after one failure. Doubles per
+ * consecutive failure (60 s, 120 s, 240 s, ...) and is capped at 5 min —
+ * one alarm tick is 30 s, so a healthy agent never sees a skip. */
+const GUIDE_BACKOFF_BASE_MS = 30_000;
+const GUIDE_BACKOFF_CAP_MS = 5 * 60_000;
+/** DO-storage keys for guide health and stashed boundary syntheses — small,
+ * instance-independent state that must survive eviction (no D1 schema). */
+const GUIDE_HEALTH_KEY = "guideHealth";
+const PENDING_SYNTHESIS_KEY = "pendingSynthesis";
+/** Bound on stashed boundary passes (one per segment boundary; rooms are small). */
+const MAX_PENDING_SYNTHESIS_KEYS = 8;
+
+type GuideAgentName = "evaluator" | "pacer" | "synthesis";
+
+/** Per-agent failure bookkeeping for the guide's LLM work. `skipUntilMs` is
+ * the backoff gate; `consecutiveFailures` resets on the next success. */
+interface GuideAgentHealth {
+  consecutiveFailures: number;
+  /** Epoch ms before which this agent must not be invoked again. */
+  skipUntilMs: number;
+  totalFailures: number;
+  lastError: string | null;
+  lastErrorAt: string | null;
+  lastSuccessAt: string | null;
+}
+
+type GuideHealthState = Partial<Record<GuideAgentName, GuideAgentHealth>>;
+
 /** Real lab rooms use the deterministic "lab-<labSessionId>" key from
  * openLabSession; anything else is an ephemeral test/ad-hoc session that
  * keeps the pre-auth behavior (the test harness relies on it). */
@@ -86,6 +118,16 @@ export class SessionDO extends DurableObject<Env> {
   private lastEvaluatedCount: Record<string, number> = {};
   private lastPacerAction: string | undefined;
   private guideWorkInFlight = false;
+  // Guide health: per-agent consecutive failures + exponential backoff.
+  // Persisted in DO storage, so an eviction cannot silently reset a
+  // backing-off agent into hammering a failing provider.
+  private guideHealth: GuideHealthState = {};
+  /** Boundary syntheses that could not start (mutex busy or agent backing
+   * off), oldest first. Persisted so an eviction between the boundary and
+   * the retry does not lose the pass. */
+  private pendingSynthesisKeys: string[] = [];
+  /** Cached LLM client — one per DO instance, not one per guide action. */
+  private guideClientInstance: LlmClient | null = null;
   /** The spine plan (only meaningful when SESSION_SPINE=true and this
    * session was opened on the reference plan). Cached; plans are static. */
   private spinePlan: SessionPlan | null = null;
@@ -101,6 +143,10 @@ export class SessionDO extends DurableObject<Env> {
       // sessions (no row yet) fall through to initialState.
       this.state = stored ?? (await this.restoreFromCheckpoint()) ?? this.initialState();
       this.normalizeState();
+      // Guide health + stashed boundary passes are small, instance-
+      // independent state — same eviction treatment as the session itself.
+      this.guideHealth = (await ctx.storage.get<GuideHealthState>(GUIDE_HEALTH_KEY)) ?? {};
+      this.pendingSynthesisKeys = (await ctx.storage.get<string[]>(PENDING_SYNTHESIS_KEY)) ?? [];
     });
   }
 
@@ -206,9 +252,72 @@ export class SessionDO extends DurableObject<Env> {
     return Boolean(this.env.ANTHROPIC_API_KEY) && this.env.GUIDE_ENABLED !== "false";
   }
 
-  private guideClient(): AnthropicLlmClient | null {
+  /** One cached client per DO instance — a fresh AnthropicLlmClient per guide
+   * action was pure overhead (a new SDK object, auth state, and connection
+   * pool per evaluation/pacer/synthesis call). The env key is stable for an
+   * instance's lifetime, so the cache never needs invalidation. */
+  private guideClient(): LlmClient | null {
     if (!this.guideActive()) return null;
-    return new AnthropicLlmClient(this.env.ANTHROPIC_API_KEY!);
+    if (!this.guideClientInstance) {
+      this.guideClientInstance = new AnthropicLlmClient(this.env.ANTHROPIC_API_KEY!);
+    }
+    return this.guideClientInstance;
+  }
+
+  private guideHealthFor(agent: GuideAgentName): GuideAgentHealth {
+    const existing = this.guideHealth[agent];
+    if (existing) return existing;
+    const fresh: GuideAgentHealth = {
+      consecutiveFailures: 0,
+      skipUntilMs: 0,
+      totalFailures: 0,
+      lastError: null,
+      lastErrorAt: null,
+      lastSuccessAt: null,
+    };
+    this.guideHealth[agent] = fresh;
+    return fresh;
+  }
+
+  /** True while a prior failure still holds this agent in its backoff
+   * window — the tick is skipped entirely (no LLM spend, no log spam). */
+  private guideAgentSkipped(agent: GuideAgentName): boolean {
+    return Date.now() < this.guideHealthFor(agent).skipUntilMs;
+  }
+
+  private async persistGuideHealth(): Promise<void> {
+    await this.ctx.storage.put(GUIDE_HEALTH_KEY, this.guideHealth);
+  }
+
+  /** Success clears the streak — the backoff applies only to CONSECUTIVE
+   * failures, so one bad prompt can never mute an agent for the session. */
+  private async recordGuideSuccess(agent: GuideAgentName): Promise<void> {
+    const health = this.guideHealthFor(agent);
+    const wasBackingOff = health.consecutiveFailures > 0 || health.skipUntilMs > 0;
+    health.consecutiveFailures = 0;
+    health.skipUntilMs = 0;
+    health.lastSuccessAt = new Date().toISOString();
+    if (wasBackingOff) await this.persistGuideHealth();
+  }
+
+  /** A guide failure must never surface into the room — but it must never be
+   * invisible either. One structured line with a stable prefix, a persisted
+   * consecutive-failure counter, and an exponential skip for the next attempt
+   * (60 s, 120 s, ... capped at 5 min). Counters live in DO storage, so an
+   * eviction cannot reset a backing-off agent into hammering. */
+  private async recordGuideFailure(agent: GuideAgentName, err: unknown): Promise<void> {
+    const health = this.guideHealthFor(agent);
+    health.consecutiveFailures += 1;
+    health.totalFailures += 1;
+    const now = Date.now();
+    const backoffMs = Math.min(GUIDE_BACKOFF_CAP_MS, GUIDE_BACKOFF_BASE_MS * 2 ** health.consecutiveFailures);
+    health.skipUntilMs = now + backoffMs;
+    health.lastError = (err instanceof Error ? `${err.name}: ${err.message}` : String(err)).slice(0, 300);
+    health.lastErrorAt = new Date(now).toISOString();
+    console.error(
+      `${GUIDE_ERROR_LOG_PREFIX} agent=${agent} consecutive=${health.consecutiveFailures} total=${health.totalFailures} retryInMs=${backoffMs} session=${this.state?.sessionId ?? "unknown"} error=${health.lastError}`,
+    );
+    await this.persistGuideHealth();
   }
 
   private currentElapsedMinutes(): number {
@@ -273,10 +382,12 @@ export class SessionDO extends DurableObject<Env> {
   /** EVALUATOR(+PROBER) pass, run off the message-handling path so an LLM
    * latency spike never delays a phone's submit ack. At most one guide
    * evaluation in flight at a time; at most one per interval; only when
-   * new submissions arrived since the last evaluation. */
+   * new submissions arrived since the last evaluation; skipped entirely
+   * while a prior failure's backoff window is open. */
   private maybeRunEvaluation(segmentKey: string): void {
     const llm = this.guideClient();
     if (!llm || this.guideWorkInFlight) return;
+    if (this.guideAgentSkipped("evaluator")) return; // backing off after consecutive failures
     const s = this.state!;
     const count = s.submissionCounts[segmentKey] ?? 0;
     if (count < MIN_SUBMISSIONS_TO_EVALUATE) return;
@@ -296,13 +407,23 @@ export class SessionDO extends DurableObject<Env> {
         ctx.priorSegment?.key,
       ).catch(() => undefined);
       const result = await evaluateAndMaybeProbe({ ...ctx, transcriptWindow: transcript }, spec, llm);
+      await this.recordGuideSuccess("evaluator");
+      // Verdict telemetry: production can now distinguish "guide agreed,
+      // stayed silent" from "guide never ran".
+      console.log(
+        `${GUIDE_VERDICT_LOG_PREFIX} agent=evaluator verdict=${result.output?.verdict ?? "none"} session=${s.sessionId} segment=${segmentKey} submissions=${count}`,
+      );
       if (result.message) this.publishGuideMessage(result.message);
     })()
-      .catch(() => {
-        /* guide failures must never surface into the room; the next tick retries */
+      .catch(async (err) => {
+        /* Guide failures must never surface into the room — but they are no
+         * longer silent: logged, counted, and backed off. The next eligible
+         * tick retries once the skip window closes. */
+        await this.recordGuideFailure("evaluator", err);
       })
-      .finally(() => {
+      .finally(async () => {
         this.guideWorkInFlight = false;
+        await this.runPendingSynthesisIfIdle();
       });
     this.ctx.waitUntil(work);
   }
@@ -310,15 +431,35 @@ export class SessionDO extends DurableObject<Env> {
   /** SYNTHESIZER pass for the segment that just ended (advance/backtrack),
    * off the message path. Writes provenance-verified artifacts server-side
    * from stored submissions — client-supplied submission data is never
-   * trusted for plan artifacts. */
-  private runBoundarySynthesis(segmentKey: string): void {
+   * trusted for plan artifacts.
+   *
+   * A boundary pass that cannot start yet (the shared guide mutex is held by
+   * an in-flight evaluation, or the agent is inside a failure backoff) is
+   * STASHED, not dropped, and runs from the in-flight work's finally() or the
+   * next alarm tick. Returning silently here used to lose the segment's draft
+   * notes permanently. */
+  private async runBoundarySynthesis(segmentKey: string): Promise<void> {
     const llm = this.guideClient();
-    if (!llm || this.guideWorkInFlight) return;
+    if (!llm) return;
     const s = this.state!;
     const submissions = Object.values(s.submissions[segmentKey] ?? {}).map((r) => r.content);
-    if (submissions.length === 0) return; // nothing in the room's input to synthesize
-
+    if (submissions.length === 0) {
+      // nothing in the room's input to synthesize — drop any stale stash
+      this.consumePendingSynthesis(segmentKey);
+      await this.persistPendingSynthesis();
+      return;
+    }
+    if (this.guideWorkInFlight || this.guideAgentSkipped("synthesis")) {
+      await this.stashPendingSynthesis(segmentKey);
+      return;
+    }
+    // Claim the mutex AND consume the stashed key in the same tick, before
+    // any await — two interleaved triggers (in-flight finally + alarm) can
+    // never start two passes for one boundary, and a synthesis that already
+    // succeeded can never be re-run from the stash.
+    this.consumePendingSynthesis(segmentKey);
     this.guideWorkInFlight = true;
+    await this.persistPendingSynthesis();
     const work = (async () => {
       const ctx = this.buildGuideContext(segmentKey, submissions);
       const spec = specFor(ctx.segment);
@@ -334,8 +475,9 @@ export class SessionDO extends DurableObject<Env> {
         }
       });
       this.publishGuideMessage(result.message);
+      await this.recordGuideSuccess("synthesis");
     })()
-      .catch((err) => {
+      .catch(async (err) => {
         // Provenance failures are the designed hard path (a draft that lies
         // about sourcing is worse than none) — tell the room honestly and
         // keep the raw input available for a manual synthesis.
@@ -347,14 +489,58 @@ export class SessionDO extends DurableObject<Env> {
             text: `Draft notes from this segment failed source verification and were not saved. The raw input is intact — you can synthesize manually from the dashboard.`,
             createdAt: new Date().toISOString(),
           });
-          return;
         }
-        /* other guide failures stay silent; the manual synthesis route remains */
+        /* Other guide failures stay off the room's screen — but never silent:
+         * logged, counted, and backed off like every other guide agent. */
+        await this.recordGuideFailure("synthesis", err);
       })
-      .finally(() => {
+      .finally(async () => {
         this.guideWorkInFlight = false;
+        await this.runPendingSynthesisIfIdle();
       });
     this.ctx.waitUntil(work);
+  }
+
+  /** Stash a boundary pass that could not start, and persist the list — an
+   * eviction between the boundary and the retry must not lose the pass. */
+  private async stashPendingSynthesis(segmentKey: string): Promise<void> {
+    if (this.pendingSynthesisKeys.includes(segmentKey)) return;
+    if (this.pendingSynthesisKeys.length >= MAX_PENDING_SYNTHESIS_KEYS) {
+      this.pendingSynthesisKeys.shift(); // bounded; the oldest pass gives way
+    }
+    this.pendingSynthesisKeys.push(segmentKey);
+    await this.persistPendingSynthesis();
+  }
+
+  /** Synchronous consume: the caller claims `guideWorkInFlight` in the same
+   * tick, so interleaved triggers can never run one boundary twice. */
+  private consumePendingSynthesis(segmentKey: string): void {
+    if (!this.pendingSynthesisKeys.includes(segmentKey)) return;
+    this.pendingSynthesisKeys = this.pendingSynthesisKeys.filter((key) => key !== segmentKey);
+  }
+
+  /** Best-effort persistence for the pending-synthesis list — a storage
+   * hiccup must never wedge the guide loop (the in-memory list stays
+   * authoritative for this instance), but it must not be invisible either. */
+  private async persistPendingSynthesis(): Promise<void> {
+    try {
+      await this.ctx.storage.put(PENDING_SYNTHESIS_KEY, this.pendingSynthesisKeys);
+    } catch (err) {
+      console.error(
+        `${GUIDE_ERROR_LOG_PREFIX} op=pending-synthesis-persist session=${this.state?.sessionId ?? "unknown"} error=${(err instanceof Error ? `${err.name}: ${err.message}` : String(err)).slice(0, 300)}`,
+      );
+    }
+  }
+
+  /** Run a stashed boundary pass once the shared mutex is free — called from
+   * the in-flight work's finally() and from alarm(). runBoundarySynthesis
+   * consumes the stashed key synchronously before starting, so a completed
+   * synthesis is never double-run. */
+  private async runPendingSynthesisIfIdle(): Promise<void> {
+    if (this.guideWorkInFlight) return;
+    const nextKey = this.pendingSynthesisKeys[0];
+    if (!nextKey) return;
+    await this.runBoundarySynthesis(nextKey);
   }
 
   /** Route one instructor action through the pure runtime (build plan §5.4).
@@ -413,7 +599,7 @@ export class SessionDO extends DurableObject<Env> {
     await this.persist();
     this.broadcast();
     await this.checkpointToD1(); // every instructor action is high-value state — build plan §3.2
-    if (action.type === "advance_segment") this.runBoundarySynthesis(endedKey);
+    if (action.type === "advance_segment") await this.runBoundarySynthesis(endedKey);
   }
 
   // ------------------------------------------------------------------
@@ -511,7 +697,7 @@ export class SessionDO extends DurableObject<Env> {
         await this.persist();
         this.broadcast();
         await this.checkpointToD1(); // segment boundary — build plan §3.2
-        this.runBoundarySynthesis(endedKey);
+        await this.runBoundarySynthesis(endedKey);
         return;
       }
       case "backtrack_segment": {
@@ -645,6 +831,9 @@ export class SessionDO extends DurableObject<Env> {
     await this.ready;
     await this.checkpointToD1();
     await this.runPacerIfDue();
+    // A boundary pass stashed while the guide mutex was busy runs here when
+    // the in-flight work's finally() has not already picked it up.
+    await this.runPendingSynthesisIfIdle();
     if (this.isSpine() && this.state?.runtime && this.state.runtime.phase !== "complete") {
       this.runSpineTick();
     }
@@ -699,6 +888,7 @@ export class SessionDO extends DurableObject<Env> {
   private async runPacerIfDue(): Promise<void> {
     const llm = this.guideClient();
     if (!llm || this.guideWorkInFlight) return;
+    if (this.guideAgentSkipped("pacer")) return; // backing off after consecutive failures
     const s = this.state!;
     // Spine sessions: PACER speaks for segments, not for breaks, and stays
     // silent when the leader has paused the Guide or taken over.
@@ -721,9 +911,12 @@ export class SessionDO extends DurableObject<Env> {
       const { message, action } = await runPacerTick(ctx, spec, llm, this.lastPacerAction);
       this.lastPacerAction = action;
       if (message) this.publishGuideMessage(message);
-    } catch {
+      await this.recordGuideSuccess("pacer");
+    } catch (err) {
       // PACER is deterministic at its core; a failure here costs one tick,
-      // never the session.
+      // never the session — but it is no longer invisible (or re-spent on
+      // every 30s alarm while the provider is failing).
+      await this.recordGuideFailure("pacer", err);
     }
   }
 
