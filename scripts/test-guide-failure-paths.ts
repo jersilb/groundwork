@@ -43,6 +43,18 @@
 //   * the success-path probe detail is the evaluator's VERDICT again; only
 //     the PROBER-fallback probe (new behavior by design) carries evidence.
 //
+// CRITIC wave-1.3 findings closed here (leader-edit fingerprint / episode
+// marker durability / episode-clear coverage):
+//
+//   * a mid-flight leader EDIT of an already-stored submission (same count,
+//     changed content) must re-stash a same-segment boundary — the in-flight
+//     snapshot is compared by content fingerprint, not by a bare count,
+//   * a successful pass clears the segment's failure episode, so a LATER
+//     failure re-notices (the episode-clear had no covering check at all),
+//   * the failure-notice episode marker is persisted in DO storage (one key,
+//     no D1 table, no migration), so an eviction cannot re-open an episode the
+//     room already saw.
+//
 // Runs the REAL SessionDO class under plain Node: "cloudflare:workers" is
 // stubbed with an inline loader, the fake DurableObjectState drains
 // ctx.waitUntil work deterministically, and the clock is injected so the
@@ -1347,6 +1359,188 @@ await check("synthesis: a retry after a partial artifact save writes no duplicat
   assert.equal(countFor(artifactB), 1, "and the faulted artifact is written exactly once");
   const synthMessages = (readState(inst).guideLog ?? []).filter((m) => m.kind === "synthesis" && m.segmentKey === SEGMENT);
   assert.equal(synthMessages.length, 1, "the recovered pass reaches the room once");
+});
+
+// ==============================================================================
+// 20) CRITIC wave 1.3 (item 1) MED: the in-flight dedupe was COUNT-only. The
+//     leader can edit an already-stored submission in place (leader_override):
+//     same count, changed content. A same-segment boundary arriving mid-flight
+//     compared 2 <= 2 and skipped, so the edited text reached NO synthesis
+//     prompt (measured pre-fix: stashed=[], attempts=1, promptsWithEdit=0).
+//     The pass snapshot is a content FINGERPRINT now, not a bare count.
+// ==============================================================================
+await check("boundary synthesis: a mid-flight leader edit re-stashes the boundary (fingerprint, not count)", async () => {
+  resetClock();
+  const { inst, ctx } = makeHarness({ sessionKey: "boundary-leader-edit" });
+  const editedSubmission = "The roof repair is due in March and costs $16k after the second bid.";
+  let resolveFirst: ((text: string) => void) | undefined;
+  const firstPending = new Promise<string>((resolve) => {
+    resolveFirst = resolve;
+  });
+  let synthesisCalls = 0;
+  const llm = new ScriptedLlmClient((system) => {
+    if (system.includes("SYNTHESIZER")) {
+      synthesisCalls += 1;
+      return synthesisCalls === 1 ? firstPending : validSynthesisJson();
+    }
+    if (system.includes("EVALUATOR")) return evaluatorVerdictJson("", "on_track");
+    if (system.includes("PACER")) return JSON.stringify({ message_to_room: "Keep it tight.", rationale: "scripted" });
+    throw new Error(`unexpected agent prompt: ${system.slice(0, 48)}`);
+  });
+  injectLlm(inst, llm);
+  const phone = makeSocket("phone", "le-phone");
+  const screen = makeSocket("screen", "le-screen");
+
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "le-0", content: SUBMISSION_ONE }));
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "le-1", content: SUBMISSION_TWO }));
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  await flush();
+  assert.equal(llm.countFor("SYNTHESIZER"), 1, "precondition: welcome's synthesis is in flight (held open)");
+
+  // The leader edits an ALREADY-STORED submission in place — the count does
+  // not move, only the content (the leader_override path, §5.5).
+  await inst.webSocketMessage(
+    screen,
+    JSON.stringify({
+      type: "leader_override",
+      override: { kind: "submission", segmentKey: SEGMENT, clientUuid: "le-0", newContent: editedSubmission },
+    }),
+  );
+  // …and the segment is left again mid-flight (a normal mis-advance correction).
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "backtrack_segment" }));
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  const stashedMidFlight = readPending(inst);
+  assert.deepEqual(
+    stashedMidFlight,
+    [SEGMENT],
+    "an edit the in-flight pass never snapshotted must stash the boundary, not vanish (the submission count is unchanged: 2)",
+  );
+
+  resolveFirst!(validSynthesisJson()); // pass #1 (old snapshot) settles…
+  await ctx.__drain(); // …and its finally() runs the stashed pass with the edited text
+  await inst.alarm();
+  await ctx.__drain();
+
+  const promptsWithEdit = llm.calls.filter((call) => call.system.includes("SYNTHESIZER") && call.content.includes("$16k")).length;
+  console.log(
+    `  [measured] stashed mid-flight=${JSON.stringify(stashedMidFlight)}; synthesizer attempts=${llm.countFor("SYNTHESIZER")}; prompts carrying the edit=${promptsWithEdit}`,
+  );
+  assert.equal(llm.countFor("SYNTHESIZER"), 2, "the boundary re-runs so the leader's edit is synthesized (pre-fix: attempts=1)");
+  assert.equal(promptsWithEdit, 1, "the edited text reaches a synthesis prompt exactly once");
+  assert.deepEqual(readPending(inst), [], "nothing left pending after the stashed pass runs");
+});
+
+// ==============================================================================
+// 21) CRITIC wave 1.3 (item 2): mutation M13 (delete-on-success removed) stayed
+//     green on the whole shipped suite — nothing pinned the episode ending.
+//     A successful pass must clear the segment's failure episode, so a LATER
+//     failure is new information and re-notices (Critic probe A2: attempts=3,
+//     notices=2).
+// ==============================================================================
+await check("synthesis: a successful pass clears the failure episode — a later failure re-notices", async () => {
+  resetClock();
+  const { inst, ctx } = makeHarness({ sessionKey: "failure-episode-clear" });
+  let mode: "fail" | "ok" = "fail";
+  const llm = new ScriptedLlmClient((system) => {
+    if (system.includes("SYNTHESIZER")) return mode === "fail" ? fabricatedSynthesisJson() : validSynthesisJson();
+    if (system.includes("EVALUATOR")) return evaluatorVerdictJson("", "on_track");
+    if (system.includes("PACER")) return JSON.stringify({ message_to_room: "Keep it tight.", rationale: "scripted" });
+    throw new Error(`unexpected agent prompt: ${system.slice(0, 48)}`);
+  });
+  injectLlm(inst, llm);
+  const phone = makeSocket("phone", "ep-phone");
+  const screen = makeSocket("screen", "ep-screen");
+  const notices = () =>
+    (readState(inst).guideLog ?? []).filter((m) => m.kind === "synthesis" && m.text.includes("failed source verification")).length;
+
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "ep-0", content: SUBMISSION_ONE }));
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "ep-1", content: SUBMISSION_TWO }));
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  await ctx.__drain();
+  assert.equal(llm.countFor("SYNTHESIZER"), 1, "precondition: attempt #1 hit the provenance hard stop");
+  assert.equal(notices(), 1, "precondition: notice #1 reached the room");
+
+  // Attempt #2 — same segment, back after the backoff — SUCCEEDS: the episode
+  // is over and the room gets the saved-notes message.
+  mode = "ok";
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "backtrack_segment" }));
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  assert.deepEqual(readPending(inst), [SEGMENT], "precondition: the re-run waits out the synthesis backoff in the stash");
+  advanceClock(61_000);
+  await inst.alarm();
+  await ctx.__drain();
+  assert.equal(llm.countFor("SYNTHESIZER"), 2, "precondition: attempt #2 ran");
+  const savedMessages = (readState(inst).guideLog ?? []).filter((m) => m.kind === "synthesis" && m.text.includes("Draft plan notes"));
+  assert.equal(savedMessages.length, 1, "precondition: the success reached the room as saved notes");
+
+  // Attempt #3 — a later provenance stop after real progress is NEW
+  // information; the cleared episode must let the notice through.
+  mode = "fail";
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "backtrack_segment" }));
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  await ctx.__drain();
+  console.log(`  [measured] synthesizer attempts=${llm.countFor("SYNTHESIZER")}; notices=${notices()}`);
+  assert.equal(llm.countFor("SYNTHESIZER"), 3, "precondition: attempt #3 ran");
+  assert.equal(notices(), 2, "a failure after a successful pass must re-notice (M13: the stale episode suppressed it)");
+});
+
+// ==============================================================================
+// 22) CRITIC wave 1.3 (item 3): the episode marker was in-memory only, so an
+//     eviction cleared it and a post-eviction failure re-published a notice
+//     the room already had (Critic probe A4: notices=2). The marker now lives
+//     in DO storage next to guideHealth and the stash (one key; no D1 table,
+//     no migration).
+// ==============================================================================
+await check("synthesis: the failure-notice episode survives a DO instance swap (no duplicate notice)", async () => {
+  resetClock();
+  const storage: StoredMap = new Map();
+  const scripted = () =>
+    new ScriptedLlmClient((system) => {
+      if (system.includes("SYNTHESIZER")) return fabricatedSynthesisJson();
+      if (system.includes("EVALUATOR")) return evaluatorVerdictJson("", "on_track");
+      if (system.includes("PACER")) return JSON.stringify({ message_to_room: "Keep it tight.", rationale: "scripted" });
+      throw new Error(`unexpected agent prompt: ${system.slice(0, 48)}`);
+    });
+  const notices = (inst: unknown) =>
+    (readState(inst).guideLog ?? []).filter((m) => m.kind === "synthesis" && m.text.includes("failed source verification")).length;
+
+  const first = makeHarness({ sessionKey: "episode-eviction", storage });
+  const llm1 = scripted();
+  injectLlm(first.inst, llm1);
+  const phone = makeSocket("phone", "ee-phone");
+  const screen = makeSocket("screen", "ee-screen");
+  await first.inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "ee-0", content: SUBMISSION_ONE }));
+  await first.inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  await first.ctx.__drain();
+  assert.equal(llm1.countFor("SYNTHESIZER"), 1, "precondition: the pre-eviction pass hit the hard stop");
+  assert.equal(notices(first.inst), 1, "precondition: the room saw the honest notice");
+  assert.deepEqual(
+    storage.get("synthesisFailureNotified"),
+    [SEGMENT],
+    "the episode marker must be persisted in DO storage (one key; no D1 table, no migration)",
+  );
+
+  // Eviction: a NEW instance over the SAME durable storage — same room, same guide log.
+  const second = makeHarness({ sessionKey: "episode-eviction", storage });
+  await second.waitReady();
+  const llm2 = scripted();
+  injectLlm(second.inst, llm2);
+  const phone2 = makeSocket("phone", "ee-phone-2");
+  const screen2 = makeSocket("screen", "ee-screen-2");
+
+  // The same segment's boundary re-runs after the eviction and fails again;
+  // the room must NOT see a second copy of a notice it already has.
+  await second.inst.webSocketMessage(screen2, JSON.stringify({ type: "backtrack_segment" }));
+  await second.inst.webSocketMessage(screen2, JSON.stringify({ type: "advance_segment" }));
+  assert.deepEqual(readPending(second.inst), [SEGMENT], "precondition: the re-run waits out the restored backoff in the stash");
+  advanceClock(61_000);
+  await second.inst.alarm();
+  await second.ctx.__drain();
+  console.log(
+    `  [measured] post-eviction attempts=${llm2.countFor("SYNTHESIZER")}; notices in the room=${notices(second.inst)}; marker=${JSON.stringify(storage.get("synthesisFailureNotified"))}`,
+  );
+  assert.equal(llm2.countFor("SYNTHESIZER"), 1, "precondition: the post-eviction attempt genuinely ran");
+  assert.equal(notices(second.inst), 1, "an eviction must not re-open the episode: the room never sees a duplicate notice (pre-fix: notices=2)");
 });
 
 Date.now = REAL_NOW;

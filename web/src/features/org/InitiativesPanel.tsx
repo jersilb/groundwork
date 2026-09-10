@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { Target, Plus, X, UserRound } from "lucide-react";
 import { api } from "../../lib/api";
 // The caps and the truncation rule come from the server module itself, so the
-// maxLength this panel enforces, the text it shows optimistically, and the cut
-// the write boundary applies are one and the same. Do not copy these — the
-// shared module is deliberately dependency-free so it can be imported here.
-import { MAX_INITIATIVE_TITLE_CHARS, MAX_STEP_DESCRIPTION_CHARS, truncateChars } from "../../../../src/program/text-limits";
+// maxLength this panel enforces, the text it shows optimistically (via the
+// shared optimistic computation — never a local copy), and the cut the write
+// boundary applies are one and the same. Do not copy these — the shared
+// module is deliberately dependency-free so it can be imported here.
+import { MAX_INITIATIVE_TITLE_CHARS, MAX_STEP_DESCRIPTION_CHARS, optimisticStoredText } from "../../../../src/program/text-limits";
 import type { Initiative, OverdueStep } from "./types";
 import { programStore } from "./program-store";
 import { EmptyState, ErrorBanner, PanelHeader, StatusChip, formatDate, formatShortDate } from "./bits";
@@ -85,7 +86,7 @@ export default function InitiativesPanel({ programId }: InitiativesPanelProps) {
       // Show exactly what the server kept: the write boundary caps the title
       // at MAX_INITIATIVE_TITLE_CHARS, so rendering the raw submission here
       // would display text the server dropped until the next reload.
-      const next = [...initiatives, { id, title: truncateChars(title, MAX_INITIATIVE_TITLE_CHARS), whyNow, steps: [] }];
+      const next = [...initiatives, { id, title: optimisticStoredText(title, MAX_INITIATIVE_TITLE_CHARS), whyNow, steps: [] }];
       setInitiatives(next);
       setNewTitle("");
       setNewDesc("");
@@ -116,8 +117,10 @@ export default function InitiativesPanel({ programId }: InitiativesPanelProps) {
       );
       // Store what the server actually kept, not the raw draft — the write
       // boundary truncates at MAX_STEP_DESCRIPTION_CHARS and the optimistic
-      // row must never render text the server dropped.
-      const storedDescription = truncateChars(description, MAX_STEP_DESCRIPTION_CHARS);
+      // row must never render text the server dropped. The value comes from
+      // the shared module (never a local copy of the cut — that is exactly
+      // the display/server drift this call site exists to prevent).
+      const storedDescription = optimisticStoredText(description, MAX_STEP_DESCRIPTION_CHARS);
       const next = initiatives.map((i) =>
         i.id === initiativeId
           ? { ...i, steps: [...i.steps, { id, description: storedDescription, ownerUserId: draft.owner.trim() || undefined, dueDate: dueIso }] }

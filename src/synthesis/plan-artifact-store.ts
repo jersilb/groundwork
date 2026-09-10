@@ -35,6 +35,18 @@ export async function saveArtifact(env: Env, sessionId: string, artifact: DraftA
   // artifact; return it instead of inserting a second copy. Distinct
   // same-kind artifacts carry distinct content by construction, so the
   // additive rule above is preserved.
+  //
+  // Scope (CRITIC round 3, item 4 — deliberate, documented so it is not
+  // mistaken for pass-scoped): the dedupe key is the whole SESSION, not the
+  // synthesis pass. Two DIFFERENT boundaries in one session that emit
+  // byte-identical content collapse to one row (measured: 2 passes, 1 row).
+  // The match is byte-exact only: a near-identical re-save (one character of
+  // whitespace, case, or punctuation different) still inserts a new row —
+  // this is not fuzzy dedupe. A future segment- or pass-scoped fix would
+  // need a segment/pass column on session_plan_artifact plus a composite
+  // match; migration 0004 (which owns this table) has none, so that is a
+  // schema change — out of scope for this wave, and this behavior must not
+  // change until it lands.
   const liveTwin = await env.DB.prepare(
     `SELECT id FROM session_plan_artifact
      WHERE session_id = ?1 AND kind = ?2 AND content = ?3 AND superseded_by IS NULL

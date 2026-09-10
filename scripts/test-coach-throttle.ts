@@ -22,6 +22,10 @@ import type { Env } from "../src/index.ts";
 import { handleProgramRoute } from "../src/program/routes.ts";
 import { COACH_NUDGE_COOLDOWN_MS, MAX_NUDGE_PROMPT_CHARS, generateNudgesForProgram } from "../src/program/coach.ts";
 import { MAX_INITIATIVE_TITLE_CHARS, MAX_STEP_DESCRIPTION_CHARS, truncateChars } from "../src/program/initiatives.ts";
+// The optimistic computation the web panel delegates to. Imported from the
+// SAME dependency-free module the panel imports, so the value-parity check
+// runs against the exact function the client executes.
+import { optimisticStoredText } from "../src/program/text-limits.ts";
 import { HeuristicFakeLlmClient } from "../src/guide-engine/testing/fake-llm-client.ts";
 
 // node:sqlite still flag-warns as experimental on Node 22. The suite has
@@ -699,6 +703,71 @@ await check("an oversized initiative title is cut, reported and logged the same 
     truncations[0]?.includes(`omitted=${OVERSIZED_TITLE.length - MAX_INITIATIVE_TITLE_CHARS}`),
     `the log must carry the omitted character count (got: ${truncations[0] ?? "nothing logged"})`,
   );
+});
+
+// --- UI coupling: the panel's optimistic value must equal the stored value --
+//
+// Wave 1.3. The panel (web/src/features/org/InitiativesPanel.tsx) shows the
+// submitted text optimistically right after the 201. CRITIC's M12b (revert to
+// a local slice-based copy) left EVERY gate green: a Node suite cannot render
+// the React panel, and nothing observed the client's value. The optimistic
+// computation is now a pure export in the shared, dependency-free module the
+// panel imports; the checks below pin the values (surrogate straddle: 499
+// stored / announced storedLength 499) and the coupling (the panel delegates
+// to the shared export instead of re-implementing the cut).
+
+await seedProgram({ orgId: "org-7", programId: "p7", initiativeId: "i7", initiativeTitle: "Keep the welcome process honest" });
+
+await check("web panel: the optimistic value equals the stored value (surrogate straddle: 499 stored, storedLength 499)", async () => {
+  // Step description: 499 ASCII chars then the emoji's two halves land across
+  // the 500-char cap. The server backs off one unit (499); a local slice copy
+  // in the panel would keep the lone high half (500) and drift from the DB.
+  const straddling = "A".repeat(MAX_STEP_DESCRIPTION_CHARS - 1) + "😀" + "TAIL_AFTER_THE_CUT";
+  const posted = await callAddStep("i7", { description: straddling });
+  assert.equal(posted.status, 201);
+  assert.ok(posted.json.id, "the step must be created");
+  const stored = await stepDescription(posted.json.id!);
+  const displayed = optimisticStoredText(straddling, MAX_STEP_DESCRIPTION_CHARS);
+  assert.equal(displayed, stored, "the value the panel would display must equal what the server stored");
+  assert.equal(posted.json.storedLength, displayed.length, "the announced storedLength must be the displayed value's length");
+  assert.equal(
+    posted.json.storedLength,
+    MAX_STEP_DESCRIPTION_CHARS - 1,
+    "the straddle cut stores 499 — a slice-based copy would show 500 and keep a lone surrogate",
+  );
+  assert.equal(displayed, "A".repeat(MAX_STEP_DESCRIPTION_CHARS - 1), "the displayed value must be the 499-unit prefix");
+  assert.equal(firstLoneSurrogate(displayed), null, "the displayed value must be well-formed UTF-16");
+
+  // Initiative title: same contract at the 200-char cap.
+  const straddlingTitle = "T".repeat(MAX_INITIATIVE_TITLE_CHARS - 1) + "😀" + "TITLE_TAIL";
+  const created = await callCreateInitiative("p7", { title: straddlingTitle });
+  assert.equal(created.status, 201);
+  assert.ok(created.json.id, "the initiative must be created");
+  const storedTitle = await initiativeTitle(created.json.id!);
+  const displayedTitle = optimisticStoredText(straddlingTitle, MAX_INITIATIVE_TITLE_CHARS);
+  assert.equal(displayedTitle, storedTitle, "the panel's optimistic title must equal the stored title");
+  assert.equal(created.json.storedLength, displayedTitle.length, "the announced storedLength must match the displayed title length");
+  assert.equal(created.json.storedLength, MAX_INITIATIVE_TITLE_CHARS - 1, "the title straddle cut stores 199");
+});
+
+await check("web panel: the optimistic computation is delegated to the shared module (a local copy fails this)", async () => {
+  // Node cannot render the React panel here, so the coupling is pinned at the
+  // module boundary: the panel must IMPORT the optimistic computation from
+  // the same shared module the caps come from, and CALL it on both optimistic
+  // write paths (title + step description). A panel that re-implements the
+  // cut locally — CRITIC M12b's slice-based, non-surrogate-safe copy — drops
+  // the import and fails here; the drift would otherwise pass every gate.
+  const panelPath = path.join(repoRoot, "web", "src", "features", "org", "InitiativesPanel.tsx");
+  const panelSource = readFileSync(panelPath, "utf8");
+  const sharedImport = panelSource.match(/import\s*\{([^}]*)\}\s*from\s*["'][^"']*src\/program\/text-limits["']/);
+  assert.ok(sharedImport, "the panel must import its text caps + optimistic computation from src/program/text-limits.ts");
+  const importedNames = sharedImport[1].split(",").map((name) => name.trim());
+  assert.ok(
+    importedNames.includes("optimisticStoredText"),
+    `the panel must import the SHARED optimistic computation, not re-implement it (got: ${importedNames.join(", ")})`,
+  );
+  const callSites = panelSource.match(/\boptimisticStoredText\s*\(/g)?.length ?? 0;
+  assert.ok(callSites >= 2, `both optimistic write paths must call the shared computation (found ${callSites} call site(s))`);
 });
 
 // --- deploy order: missing migration must fail soft, not 500 ----------------

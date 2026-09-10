@@ -71,3 +71,16 @@ export function truncateCharsWithInfo(text: string, maxChars: number): TextTrunc
 export function truncateChars(text: string, maxChars: number): string {
   return truncateCharsWithInfo(text, maxChars).text;
 }
+
+/** The value a client should display OPTIMISTICALLY for a write that just
+ * returned 201: exactly what the write boundary stored for the same input.
+ * The web panel (web/src/features/org/InitiativesPanel.tsx) calls this to
+ * render a just-created row; it must never render the raw submission,
+ * because the server capped it — and a cut that lands between the halves of
+ * a surrogate pair drops one more unit than a plain slice would (499 vs
+ * 500), so a locally re-implemented cut drifts from what is stored. Kept
+ * here, next to the truncation rule, so the displayed value and the stored
+ * value cannot drift apart. */
+export function optimisticStoredText(value: string, maxChars: number): string {
+  return truncateChars(value, maxChars);
+}

@@ -55,8 +55,22 @@ const GUIDE_BACKOFF_CAP_MS = 5 * 60_000;
  * instance-independent state that must survive eviction (no D1 schema). */
 const GUIDE_HEALTH_KEY = "guideHealth";
 const PENDING_SYNTHESIS_KEY = "pendingSynthesis";
+/** Segment keys whose boundary-synthesis failure notice has already reached
+ * the room (the failure-notice episode). Persisted like guide health and the
+ * stash so an eviction cannot re-open an episode the room has already seen. */
+const SYNTHESIS_FAILURE_NOTIFIED_KEY = "synthesisFailureNotified";
 /** Bound on stashed boundary passes (one per segment boundary; rooms are small). */
 const MAX_PENDING_SYNTHESIS_KEYS = 8;
+
+/** Exact, order-sensitive fingerprint over a segment's submission texts —
+ * equality means "this material is byte-identical to the snapshot". A
+ * serialization, not a hash: a collision here would silently skip a
+ * same-segment boundary whose material changed — the very bug the fingerprint
+ * exists to catch. Bounded by MAX_SUBMISSIONS_PER_SEGMENT ×
+ * MAX_SUBMISSION_CHARS worst case and held only while one pass is in flight. */
+function submissionTextsFingerprint(texts: string[]): string {
+  return JSON.stringify(texts);
+}
 
 type GuideAgentName = "evaluator" | "pacer" | "synthesis";
 
@@ -133,20 +147,25 @@ export class SessionDO extends DurableObject<Env> {
    * Opus spend, duplicate room message, duplicate artifacts). Set
    * synchronously with the mutex claim, cleared in the pass's finally(). */
   private synthesisInFlightKey: string | null = null;
-  /** How many submissions the in-flight synthesis pass snapshotted when it
-   * claimed the mutex. A same-segment boundary arriving mid-flight counts as
-   * covered ONLY while the segment's submission count has not grown past
-   * this high-water mark: the unconditional skip silently dropped
-   * submissions that arrived after the snapshot — they reached no synthesis
-   * prompt at all (CRITIC round 2, item B). Set and cleared synchronously
-   * with the mutex claim. */
-  private synthesisInFlightSubmissionCount: number | null = null;
+  /** Content fingerprint (exact serialization of the submission texts) of
+   * what the in-flight synthesis pass snapshotted when it claimed the mutex.
+   * A same-segment boundary arriving mid-flight counts as covered ONLY while
+   * the segment's material is byte-identical to that snapshot: a bare count
+   * missed a leader override — same count, changed content — so the edited
+   * text reached no synthesis prompt (CRITIC round 3, item 1); it also could
+   * not tell a submission-plus-edit from no change at all. The unconditional
+   * count skip dropped submissions that arrived after the snapshot (round 2,
+   * item B). Set and cleared synchronously with the mutex claim. */
+  private synthesisInFlightFingerprint: string | null = null;
   /** Segment keys whose boundary-synthesis failure notice has already
    * reached the room, so a retry or same-segment re-run can never re-publish
    * it (the room's guide log is capped at 25 messages — duplicate notices
-   * evict real guide history; CRITIC round 2, item A). Cleared when a
-   * synthesis pass for the segment succeeds: a later failure after real
-   * progress is new information. */
+   * evict real guide history; CRITIC round 2, item A). Cleared (and the
+   * clear persisted) when a synthesis pass for the segment succeeds: a later
+   * failure after real progress is new information. Persisted in DO storage —
+   * one key, no D1 table or schema — because an in-memory-only set re-opened
+   * the episode on eviction and re-published a notice the room already saw
+   * (CRITIC round 3, item 3). */
   private synthesisFailureNotified = new Set<string>();
   /** Cached LLM client — one per DO instance, not one per guide action. */
   private guideClientInstance: LlmClient | null = null;
@@ -169,6 +188,9 @@ export class SessionDO extends DurableObject<Env> {
       // independent state — same eviction treatment as the session itself.
       this.guideHealth = (await ctx.storage.get<GuideHealthState>(GUIDE_HEALTH_KEY)) ?? {};
       this.pendingSynthesisKeys = (await ctx.storage.get<string[]>(PENDING_SYNTHESIS_KEY)) ?? [];
+      this.synthesisFailureNotified = new Set(
+        (await ctx.storage.get<string[]>(SYNTHESIS_FAILURE_NOTIFIED_KEY)) ?? [],
+      );
     });
   }
 
@@ -506,13 +528,17 @@ export class SessionDO extends DurableObject<Env> {
       // (2x Opus spend, 2 room messages, 2 artifact rows); skipping it
       // UNCONDITIONALLY silently dropped submissions that arrived after the
       // snapshot — they reached no synthesis prompt at all (CRITIC round 2,
-      // item B). Compare against the pass's high-water mark: no new material
-      // → skip (the running pass is this boundary's synthesis); new material
-      // → stash so it is synthesized once the mutex frees.
+      // item B). Compare by CONTENT FINGERPRINT, not count: a count missed a
+      // leader override — same count, changed content — so the edited text
+      // reached no synthesis prompt (CRITIC round 3, item 1). Fingerprint
+      // equal → skip (the running pass is this boundary's synthesis); any
+      // difference → stash so it is synthesized once the mutex frees.
       if (segmentKey === this.synthesisInFlightKey) {
-        const covered = this.synthesisInFlightSubmissionCount ?? 0;
-        const current = Object.keys(s.submissions[segmentKey] ?? {}).length;
-        if (current <= covered) return;
+        const coveredFingerprint = this.synthesisInFlightFingerprint;
+        const currentFingerprint = submissionTextsFingerprint(
+          Object.values(s.submissions[segmentKey] ?? {}).map((r) => r.content),
+        );
+        if (currentFingerprint === coveredFingerprint) return;
       }
       await this.stashPendingSynthesis(segmentKey);
       return;
@@ -524,9 +550,9 @@ export class SessionDO extends DurableObject<Env> {
     this.consumePendingSynthesis(segmentKey);
     this.guideWorkInFlight = true;
     this.synthesisInFlightKey = segmentKey;
-    // The high-water mark this pass consumes — a later same-segment boundary
-    // only counts as covered while the count stands still (item B).
-    this.synthesisInFlightSubmissionCount = submissions.length;
+    // The material snapshot this pass consumes — a later same-segment
+    // boundary only counts as covered while the material is byte-identical.
+    this.synthesisInFlightFingerprint = submissionTextsFingerprint(submissions);
     await this.persistPendingSynthesis();
     const work = (async () => {
       const ctx = this.buildGuideContext(segmentKey, submissions);
@@ -546,7 +572,11 @@ export class SessionDO extends DurableObject<Env> {
       await this.recordGuideSuccess("synthesis");
       // A successful pass ends the segment's failure episode: a later
       // provenance stop after real progress is new information for the room.
-      this.synthesisFailureNotified.delete(segmentKey);
+      // The clear is persisted too, so the episode boundary survives an
+      // eviction in both directions (CRITIC round 3, item 3).
+      if (this.synthesisFailureNotified.delete(segmentKey)) {
+        await this.persistSynthesisFailureNotified();
+      }
     })()
       .catch(async (err) => {
         if (err instanceof ProvenanceVerificationError) {
@@ -561,6 +591,10 @@ export class SessionDO extends DurableObject<Env> {
           // dashboard.
           if (!this.synthesisFailureNotified.has(segmentKey)) {
             this.synthesisFailureNotified.add(segmentKey);
+            // Persist the episode marker BEFORE publishing: the room's copy
+            // and the durable marker must not diverge if the instance dies
+            // between the two (CRITIC round 3, item 3).
+            await this.persistSynthesisFailureNotified();
             this.publishGuideMessage({
               id: crypto.randomUUID(),
               kind: "synthesis",
@@ -586,7 +620,7 @@ export class SessionDO extends DurableObject<Env> {
       })
       .finally(async () => {
         this.synthesisInFlightKey = null;
-        this.synthesisInFlightSubmissionCount = null;
+        this.synthesisInFlightFingerprint = null;
         this.guideWorkInFlight = false;
         await this.runPendingSynthesisIfIdle();
       });
@@ -626,6 +660,20 @@ export class SessionDO extends DurableObject<Env> {
     } catch (err) {
       console.error(
         `${GUIDE_ERROR_LOG_PREFIX} op=pending-synthesis-persist session=${this.state?.sessionId ?? "unknown"} error=${(err instanceof Error ? `${err.name}: ${err.message}` : String(err)).slice(0, 300)}`,
+      );
+    }
+  }
+
+  /** Best-effort persistence for the failure-notice episode markers — one
+   * key holding the segment keys whose notice the room has seen. Same rule as
+   * the stash: a storage hiccup must not wedge the guide loop, but it is
+   * logged. Never a D1 table or migration (CRITIC round 3, item 3). */
+  private async persistSynthesisFailureNotified(): Promise<void> {
+    try {
+      await this.ctx.storage.put(SYNTHESIS_FAILURE_NOTIFIED_KEY, [...this.synthesisFailureNotified]);
+    } catch (err) {
+      console.error(
+        `${GUIDE_ERROR_LOG_PREFIX} op=failure-notified-persist session=${this.state?.sessionId ?? "unknown"} error=${(err instanceof Error ? `${err.name}: ${err.message}` : String(err)).slice(0, 300)}`,
       );
     }
   }
