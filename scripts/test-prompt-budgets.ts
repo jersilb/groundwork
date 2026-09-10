@@ -115,10 +115,15 @@ async function check(label: string, fn: () => Promise<void> | void): Promise<voi
   }
 }
 
-await check("budget constants sit strictly below the protocol worst case", () => {
-  assert.equal(MAX_PROMPT_SUBMISSIONS, 12);
-  assert.equal(MAX_PROMPT_USER_CONTENT_CHARS, 24000);
-  assert.equal(MAX_PROMPT_TRANSCRIPT_CHARS, 12000);
+await check("budget constants: shipped pin (drift guard — not behavioral) + ceiling vs the protocol worst case", () => {
+  // Deliberate PIN. These are constant restatements — a constant cannot fail
+  // unless someone edits it — kept only so an accidental budget change is
+  // visible in review. The ONE meaningful claim here is the inequality
+  // below: the prompt ceiling must stay strictly below the uncapped
+  // protocol worst case.
+  assert.equal(MAX_PROMPT_SUBMISSIONS, 12, "PIN: shipped budget constant (drift guard)");
+  assert.equal(MAX_PROMPT_USER_CONTENT_CHARS, 24000, "PIN: shipped budget constant (drift guard)");
+  assert.equal(MAX_PROMPT_TRANSCRIPT_CHARS, 12000, "PIN: shipped budget constant (drift guard)");
   assert.ok(
     MAX_PROMPT_USER_CONTENT_CHARS < MAX_SUBMISSIONS_PER_SEGMENT * MAX_SUBMISSION_CHARS,
     "the ceiling must be below the uncapped 100 x 2,000 worst case",

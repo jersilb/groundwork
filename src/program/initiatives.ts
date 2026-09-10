@@ -2,6 +2,26 @@ import type { Env } from "../index.ts";
 
 // Initiative tracking — build plan §4/§7 Phase 6.
 
+// Write-boundary caps for the text that feeds the COACH nudge prompt
+// (src/program/coach.ts). Chosen deliberately:
+//   - description 500 chars: one solid paragraph — long enough for a real
+//     step ("call the ten lapsed volunteers, confirm the fall schedule, and
+//     flag anyone who wants a visit"), short enough that a prompt built from
+//     it is bounded by construction.
+//   - title 200 chars: headline length.
+// The web client's step input is a plain field with no length limit of its
+// own, so these cap by truncation — rejecting a submission the UI considers
+// valid would turn a long-but-legitimate step into an error banner. Rows from
+// before these caps existed are handled separately, on read, by coach.ts.
+export const MAX_INITIATIVE_TITLE_CHARS = 200;
+export const MAX_STEP_DESCRIPTION_CHARS = 500;
+
+/** Cut for length only. Text already within the cap is returned unchanged,
+ * byte for byte. */
+export function truncateChars(text: string, maxChars: number): string {
+  return text.length <= maxChars ? text : text.slice(0, maxChars);
+}
+
 export interface CreateInitiativeBody {
   title: string;
   whyNow?: string;
@@ -17,7 +37,7 @@ export async function createInitiative(env: Env, programId: string, body: Create
     `INSERT INTO initiative (id, program_id, title, why_now, owner_user_id, start_date, due_date, status, health, created_in_session_id)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'not_started', 'green', ?8)`,
   )
-    .bind(id, programId, body.title, body.whyNow ?? null, body.ownerUserId ?? null, body.startDate ?? null, body.dueDate ?? null, body.createdInSessionId ?? null)
+    .bind(id, programId, truncateChars(body.title, MAX_INITIATIVE_TITLE_CHARS), body.whyNow ?? null, body.ownerUserId ?? null, body.startDate ?? null, body.dueDate ?? null, body.createdInSessionId ?? null)
     .run();
   return id;
 }
@@ -33,7 +53,7 @@ export async function addInitiativeStep(
   await env.DB.prepare(
     `INSERT INTO initiative_step (id, initiative_id, description, owner_user_id, due_date) VALUES (?1, ?2, ?3, ?4, ?5)`,
   )
-    .bind(id, initiativeId, description, ownerUserId ?? null, dueDate ?? null)
+    .bind(id, initiativeId, truncateChars(description, MAX_STEP_DESCRIPTION_CHARS), ownerUserId ?? null, dueDate ?? null)
     .run();
   return id;
 }

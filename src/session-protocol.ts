@@ -149,6 +149,30 @@ export function capTranscriptWindow(text: string): string {
   return truncateTextTail(text, MAX_PROMPT_TRANSCRIPT_CHARS).text;
 }
 
+/** The verification source with the prompt-truncation marker removed. The
+ * marker is SYSTEM boilerplate, not room speech (guide-hardening wave 1.1):
+ * wherever the capped window doubles as a provenance source, a quote of the
+ * marker — or of a phrase inside it — must not verify. Stripping (rather
+ * than rejecting marker substrings outright) keeps every genuine quote
+ * valid, and keeps one artifact verifying the same way on every route:
+ * the alarm path's capped window and the manual synthesize route's raw
+ * window both reject marker quotes now.
+ *
+ * `truncateTextTail` normally emits the full marker as a prefix; a budget
+ * shorter than the marker slices it, leaving a leading fragment — strip any
+ * such fragment of at least "[prompt " (a floor that avoids eating a lone
+ * "[" the room could genuinely have typed). */
+export function stripPromptTruncationMarker(text: string): string {
+  const withoutMarkers = text.split(PROMPT_TRUNCATION_MARKER).join("");
+  const MIN_FRAGMENT = "[prompt ".length;
+  for (let end = PROMPT_TRUNCATION_MARKER.length - 1; end >= MIN_FRAGMENT; end--) {
+    if (withoutMarkers.startsWith(PROMPT_TRUNCATION_MARKER.slice(0, end))) {
+      return withoutMarkers.slice(end);
+    }
+  }
+  return withoutMarkers;
+}
+
 /** Renders a submissions block: heading, one line per kept submission, and —
  * when older entries were shed — an explicit truncation notice. `formatLine`
  * must be deterministic; it receives the entry and its position among the

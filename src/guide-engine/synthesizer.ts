@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { SegmentSpec } from "./segment-schema.ts";
 import type { LlmClient } from "./llm-client.ts";
 import { MODELS } from "./models.ts";
-import { applyPromptBudget, renderPromptSubmissions } from "../session-protocol.ts";
+import { applyPromptBudget, renderPromptSubmissions, stripPromptTruncationMarker } from "../session-protocol.ts";
 
 // SYNTHESIZER — build plan §5.3. Runs at segment boundaries and end of
 // session. Uses Opus, not Sonnet — this output goes in front of a board.
@@ -116,9 +116,17 @@ export function parseSynthesizerResponse(text: string): SynthesizerOutput {
 /** Returns a list of human-readable issues; empty means every provenance
  * quote genuinely appears in its claimed source. This is the check that
  * makes provenance a real feature instead of a field the model can fill
- * with anything plausible-sounding. */
+ * with anything plausible-sounding.
+ *
+ * The transcript source is verified marker-free: the prompt-budget layer's
+ * truncation marker is system boilerplate and must never satisfy a citation
+ * (guide-hardening wave 1.1 — the reviewer verified an artifact quoting
+ * nothing but the marker). Stripping rather than rejecting marker wording
+ * keeps genuine quotes valid and makes the alarm path's capped window and
+ * the manual route's raw window verify identically. */
 export function verifyProvenance(output: SynthesizerOutput, input: SynthesizerInput): string[] {
   const issues: string[] = [];
+  const transcriptSource = input.transcriptWindow ? stripPromptTruncationMarker(input.transcriptWindow) : undefined;
   for (const artifact of output.artifacts) {
     for (const ref of artifact.provenance) {
       if (ref.type === "submission") {
@@ -129,7 +137,7 @@ export function verifyProvenance(output: SynthesizerOutput, input: SynthesizerIn
           issues.push(`artifact "${artifact.kind}": quote "${ref.quote}" not found verbatim in submission[${ref.index}]`);
         }
       } else {
-        if (!input.transcriptWindow || !input.transcriptWindow.includes(ref.quote)) {
+        if (!transcriptSource || !transcriptSource.includes(ref.quote)) {
           issues.push(`artifact "${artifact.kind}": quote "${ref.quote}" not found verbatim in the transcript window`);
         }
       }

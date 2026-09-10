@@ -2,7 +2,7 @@ import type { Env } from "../index.ts";
 import { createOrg, createUser, type CreateOrgBody, type CreateUserBody } from "./org.ts";
 import { createProgram, scheduleLabSession, completeLabSession, recordConsent, getProgramState, openLabSession, LabSequenceError } from "./program.ts";
 import { createInitiative, addInitiativeStep, getOverdueSteps, type CreateInitiativeBody } from "./initiatives.ts";
-import { generateNudgesForProgram } from "./coach.ts";
+import { generateNudgesForProgram, isMissingCoachNudgeTableError } from "./coach.ts";
 import { createReviewCycle, completeReviewCycle, computeHealthSnapshot } from "./review-cycle.ts";
 import { upsertOrgCreator, requireOrgMember, requireProgramMember, getAuthFromRequest, type AuthContext } from "../auth/cloudflare-access.ts";
 
@@ -187,7 +187,21 @@ async function route(request: Request, env: Env, url: URL): Promise<Response | n
     if (!(await requireProgramMember(env, auth, m[1]))) return forbidden();
     // The dashboard calls this on every load, so the throttle and dedupe live
     // server-side in D1 (see coach.ts) — a refresh cannot re-spend the budget.
-    return Response.json(await generateNudgesForProgram(env, m[1]));
+    try {
+      return Response.json(await generateNudgesForProgram(env, m[1]));
+    } catch (err) {
+      // Deploy-order hazard: this Worker can be live before
+      // `wrangler d1 migrations apply` creates coach_nudge (0006). The
+      // migration stays required, but a lag must degrade to a clear 503
+      // instead of an unhandled throw that 500s every dashboard load.
+      if (isMissingCoachNudgeTableError(err)) {
+        return Response.json(
+          { error: "COACH nudges are not available yet: the database migration for the nudge throttle has not been applied. Retry shortly." },
+          { status: 503, headers: { "Retry-After": "60" } },
+        );
+      }
+      throw err;
+    }
   }
 
   m = p.match(/^\/program\/([A-Za-z0-9_-]+)\/review-cycle$/);

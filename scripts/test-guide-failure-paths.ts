@@ -1,6 +1,7 @@
 #!/usr/bin/env node --experimental-strip-types
 // Guide failure-path tests — the silent-failure cluster in the SessionDO's
-// guide loop (Build Staff findings, 2026-09-06, items 1/2/4/6):
+// guide loop (Build Staff findings, 2026-09-06, items 1/2/4/6; CRITIC
+// wave-1.1 findings on the same cluster):
 //
 //   * failures must be OBSERVABLE: structured `[guide-error]` lines and
 //     per-agent consecutive-failure counters persisted in DO storage (so
@@ -10,7 +11,23 @@
 //     or the next alarm tick — and never twice,
 //   * a persistently failing agent must back off (2x, 4x, ... capped 5 min)
 //     instead of re-spending on the 30s cadence,
-//   * guideClient() must reuse one client per DO instance.
+//   * PACER's compress escalation is its ONLY paid call — a transport
+//     failure there is recorded as a failure (it used to be swallowed and
+//     booked as a success, so the skip gate could never trip and
+//     lastSuccessAt lied) while the deterministic fallback still ships,
+//   * a boundary pass consumed before its attempt is RE-STASHED when the
+//     attempt fails — a transient provider failure used to silently cost
+//     the segment its notes — and a persistent failure stays bounded by
+//     the backoff (no livelock),
+//   * a re-advance out of the same segment while its synthesis is already
+//     in flight must not stash-and-double-run (duplicate spend, duplicate
+//     room message, duplicate artifacts),
+//   * stash discards (list bound, guide inactive) are logged, and the
+//     stash survives a DO instance swap,
+//   * a PROBER failure must not discard the already-paid EVALUATOR verdict
+//     (the room still gets a deterministic probe built from it),
+//   * guideClient() must reuse one client per DO instance — and the REAL
+//     guide call path (not a shadowed accessor) must use that instance.
 //
 // Runs the REAL SessionDO class under plain Node: "cloudflare:workers" is
 // stubbed with an inline loader, the fake DurableObjectState drains
@@ -36,6 +53,9 @@ register("data:text/javascript," + encodeURIComponent(LOADER_SOURCE));
 const { SessionDO } = await import("../src/session-do.ts");
 const { FAKE_LAB_SEGMENTS } = await import("../src/session-protocol.ts");
 const { EvaluatorParseError } = await import("../src/guide-engine/evaluator.ts");
+const { ProberParseError } = await import("../src/guide-engine/prober.ts");
+const { LlmTimeoutError } = await import("../src/guide-engine/llm-client.ts");
+const { specFor } = await import("../src/guide-engine/session-guide.ts");
 
 const SEGMENT = FAKE_LAB_SEGMENTS[0].key; // "welcome" — 2 min, generic spec
 
@@ -170,8 +190,17 @@ function injectLlm(inst: unknown, llm: ScriptedLlmClient): void {
   Reflect.set(inst, "guideClient", () => llm);
 }
 
-function readState(inst: unknown): { guideLog?: { kind: string; text: string; segmentKey: string }[] } {
+function readState(inst: unknown): {
+  guideLog?: { kind: string; text: string; segmentKey: string; detail?: string }[];
+  currentSegmentIndex: number;
+  segmentStartedAt: string;
+} {
   return Reflect.get(inst, "state");
+}
+
+/** The durable boundary-pass stash (oldest first). */
+function readPending(inst: unknown): string[] {
+  return Reflect.get(inst, "pendingSynthesisKeys") ?? [];
 }
 
 interface AgentHealth {
@@ -180,6 +209,7 @@ interface AgentHealth {
   totalFailures: number;
   lastError: string | null;
   lastErrorAt: string | null;
+  lastSuccessAt: string | null;
 }
 
 function readHealth(inst: unknown): Partial<Record<string, AgentHealth>> {
@@ -480,60 +510,117 @@ await check("boundary synthesis: interleaved triggers never double-run a stashed
 });
 
 // ==============================================================================
-// 6) guideClient(): one cached client per DO instance.
+// 6) guideClient(): one cached client per DO instance — and the REAL guide
+//    call path must actually use that cached instance.
+//
+//    The identity assertion alone was decorative: every other check shadows
+//    the accessor via injectLlm, so nothing proved the guide plumbing
+//    exercised the cache. This check patches ONLY the transport method on
+//    the cached instance (no accessor shadowing) and drives a real
+//    evaluation through the real orchestration — if the DO built a fresh
+//    client per action, the stub would never see the EVALUATOR call.
 // ==============================================================================
-await check("guideClient: one cached client per DO instance", async () => {
-  const { inst } = makeHarness({ sessionKey: "client-cache" });
+await check("guideClient: the real guide call path uses the cached client instance", async () => {
+  resetClock();
+  const { inst, ctx } = makeHarness({ sessionKey: "client-cache" });
   await (Reflect.get(inst, "ready") as Promise<void>);
-  const guideClient = (inst as unknown as { guideClient(): unknown }).guideClient.bind(inst);
-  const first = guideClient();
-  const second = guideClient();
-  assert.ok(first, "client exists when the key is present and the guide is enabled");
-  assert.ok(first === second, "guideClient() must reuse the cached instance");
+  const cached = (inst as unknown as { guideClient(): unknown }).guideClient();
+  assert.ok(cached, "client exists when the key is present and the guide is enabled");
+
+  const calls: string[] = [];
+  (cached as { complete: (params: { system: string; messages: { content: string }[] }) => Promise<{ text: string }> }).complete =
+    async (params) => {
+      calls.push(params.system);
+      return { text: evaluatorVerdictJson(params.messages[0]?.content ?? "", "on_track") };
+    };
+
+  const phone = makeSocket("phone", "cache-phone");
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "c-0", content: SUBMISSION_ONE }));
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "c-1", content: SUBMISSION_TWO }));
+  await ctx.__drain();
+
+  const again = (inst as unknown as { guideClient(): unknown }).guideClient();
+  console.log(`  [measured] guide LLM calls through the cached instance=${calls.length}; agent=${calls[0]?.includes("EVALUATOR") ? "EVALUATOR" : "other"}`);
+  assert.ok(again === cached, "guideClient() must reuse the cached instance");
+  assert.equal(calls.length, 1, "the real guide path must call complete() on the CACHED instance (not a fresh client)");
+  assert.ok(calls[0].includes("EVALUATOR"), "and that call was the EVALUATOR pass");
 });
 
 // ==============================================================================
-// 6) PACER tick failure: logged and exponentially skipped (60s → 120s).
+// 6b) PACER's compress-escalation failure (the REAL transport, not a synthetic
+//     fault outside the LLM call): logged, counted, gated — and the fallback
+//     text still reaches the room.
+//
+//     The pre-wave check injected its fault by shadowing buildGuideContext,
+//     which proved only that a catch clause exists; the real escalation error
+//     was swallowed inside runPacerTick and the tick was recorded as a
+//     SUCCESS (consecutiveFailures stayed 0, the skip gate could never trip,
+//     lastSuccessAt lied). This check drives PACER to its only LLM-requiring
+//     decision (compress) with a throwing LlmClient.
 // ==============================================================================
-await check("pacer: tick failure is logged and exponentially backed off", async () => {
+await check("pacer: a real compress-escalation failure is logged, counted, gated — fallback still ships", async () => {
   resetClock();
-  const { inst, ctx } = makeHarness({ sessionKey: "pacer-backoff" });
+  const { inst, ctx } = makeHarness({ sessionKey: "pacer-real-failure" });
+  await (Reflect.get(inst, "ready") as Promise<void>);
   const llm = new ScriptedLlmClient(() => {
-    throw new Error("scripted pacer transport should not be reached");
+    throw new LlmTimeoutError(20_000, "claude-sonnet-5");
   });
   injectLlm(inst, llm);
-  let tickCalls = 0;
-  // Synthetic fault at the tick boundary: any unexpected throw in the tick
-  // body must be observable and must trip the backoff (the old bare catch
-  // swallowed it and kept the 30s loop spinning).
-  Reflect.set(inst, "buildGuideContext", () => {
-    tickCalls += 1;
-    throw new Error("synthetic pacer tick fault");
+  // Instrument (not fault-inject) the tick body: counts how often PACER
+  // actually enters its tick. Delegates to the real implementation, so the
+  // measured value is the real path's.
+  let tickEntries = 0;
+  const realBuildContext = Reflect.get(inst, "buildGuideContext") as (...args: unknown[]) => unknown;
+  Reflect.set(inst, "buildGuideContext", (...args: unknown[]) => {
+    tickEntries += 1;
+    return realBuildContext.apply(inst, args);
   });
+  // Drive to 'compress': warmup (planned 3 min) at 1.05x planned time with a
+  // forward budget smaller than the segment, exit criteria unmet. All clock
+  // state is the DO's real input, set through its real state object.
+  const warmupSpec = specFor(FAKE_LAB_SEGMENTS[1]);
+  const state = readState(inst);
+  state.currentSegmentIndex = 1;
+  state.segmentStartedAt = new Date(fakeNow - Math.round(warmupSpec.planned_minutes * 1.05 * 60_000)).toISOString();
+
   const cap = captureConsole();
   try {
-    await inst.alarm(); // t+0 — fault → skip window opens (60s)
+    await inst.alarm(); // t+0 — compress → escalation attempted → transport fails
     await ctx.__drain();
-    assert.equal(tickCalls, 1, "first alarm runs the tick");
+    assert.equal(llm.countFor("PACER"), 1, "the compress escalation must actually be attempted (real transport)");
+
+    const pacerErrors = cap.errors.filter((line) => line.includes("[guide-error] agent=pacer"));
+    assert.equal(pacerErrors.length, 1, `the swallowed failure must now be logged: ${JSON.stringify(cap.errors)}`);
+    assert.ok(pacerErrors[0].includes("consecutive=1"), "first failure records a consecutive count of 1");
+    assert.ok(pacerErrors[0].includes("retryInMs=60000"), "and opens the doubled skip window");
+
+    const health = readHealth(inst).pacer;
+    assert.ok(health && health.consecutiveFailures === 1, `the failure counter must increment (was booked as success): ${JSON.stringify(health)}`);
+    assert.ok(health && health.totalFailures === 1, "total-failure counter tracks it too");
+    assert.ok(health && health.skipUntilMs > fakeNow, "the skip gate must trip on the failure it was built for");
+    assert.equal(health?.lastSuccessAt, null, "lastSuccessAt must not lie about a failed tick");
+
+    const pacerMessages = (readState(inst).guideLog ?? []).filter((m) => m.kind === "pacer");
+    assert.equal(pacerMessages.length, 1, "the deterministic fallback must still reach the room");
+    assert.ok(
+      pacerMessages[0].text.includes("needs judgment on what to cut"),
+      `fallback text must be unchanged: ${pacerMessages[0].text}`,
+    );
+
     advanceClock(31_000);
-    await inst.alarm(); // t+31s — inside the window, must not re-enter
+    await inst.alarm(); // inside the 60s window — no tick, no spend
     await ctx.__drain();
-    assert.equal(tickCalls, 1, "backoff must hold the agent out of its own tick loop");
+    assert.equal(tickEntries, 1, "the skip gate must hold PACER out of its own tick loop");
+    assert.equal(llm.calls.length, 1, "no paid retry inside the backoff window");
+
     advanceClock(30_000);
-    await inst.alarm(); // t+61s — window expired, retries
+    await inst.alarm(); // past the window — the pacer resumes its work
     await ctx.__drain();
-    assert.equal(tickCalls, 2, "the retry resumes after the window");
+    assert.equal(tickEntries, 2, "the pacer resumes after the skip window closes");
   } finally {
     cap.restore();
   }
-  const pacerErrors = cap.errors.filter((line) => line.includes("[guide-error] agent=pacer"));
-  const retryValues = pacerErrors.map((line) => /retryInMs=(\d+)/.exec(line)?.[1]);
-  const health = readHealth(inst).pacer;
-  console.log(`  [measured] pacer errorLogs=${pacerErrors.length}; retryInMs sequence=${JSON.stringify(retryValues)}`);
-  assert.equal(pacerErrors.length, 2, "each swallowed-silently-before failure is now logged");
-  assert.deepEqual(retryValues, ["60000", "120000"], "pacer skips double per consecutive failure");
-  assert.ok(health && health.consecutiveFailures === 2, "pacer streak is counted");
-  assert.equal(llm.calls.length, 0, "a failing tick never reached the model");
+  console.log(`  [measured] pacer escalation attempts=${llm.calls.length}; errorLogs=${cap.errors.filter((l) => l.includes("[guide-error] agent=pacer")).length}; tickEntries=${tickEntries}`);
 });
 
 // ==============================================================================
@@ -588,6 +675,299 @@ await check("no-regression: fabricated provenance publishes the honest message, 
   assert.equal(honest.length, 1, "the room is told the draft failed verification");
   assert.equal(artifactWrites.length, 0, "no unverified artifact may be persisted");
   assert.ok(synthesisErrors.length >= 1, "the failure must be observable (was silent)");
+});
+
+// ==============================================================================
+// 9) CRITIC wave 1.1 HIGH: a re-advance out of the SAME segment while its
+//    synthesis is still in flight must not stash-and-double-run.
+//
+//    The reviewer's probe: hold the welcome synthesis open, backtrack, and
+//    re-advance out of welcome (a normal mis-advance correction). The
+//    in-flight work's finally() consumed the freshly stashed key and ran the
+//    boundary again: 2 SYNTHESIZER calls, 2 room messages, 2 identical
+//    artifact rows.
+// ==============================================================================
+await check("boundary synthesis: re-advancing the same segment mid-flight must not double-run", async () => {
+  resetClock();
+  const { inst, ctx, db } = makeHarness({ sessionKey: "same-segment-dup" });
+  let resolveSynthesis: ((text: string) => void) | undefined;
+  const synthesisPending = new Promise<string>((resolve) => {
+    resolveSynthesis = resolve;
+  });
+  let holdSynthesis = true;
+  const llm = new ScriptedLlmClient((system, content) => {
+    if (system.includes("EVALUATOR")) return evaluatorVerdictJson(content, "on_track");
+    if (system.includes("SYNTHESIZER")) return holdSynthesis ? synthesisPending : validSynthesisJson();
+    throw new Error(`unexpected agent prompt: ${system.slice(0, 48)}`);
+  });
+  injectLlm(inst, llm);
+  const phone = makeSocket("phone", "dup-phone");
+  const screen = makeSocket("screen", "dup-screen");
+
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "d-0", content: SUBMISSION_ONE }));
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "d-1", content: SUBMISSION_TWO }));
+  await ctx.__drain(); // the evaluation settles; the mutex is free
+  assert.equal(llm.countFor("SYNTHESIZER"), 0, "precondition: no synthesis yet");
+
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  await flush();
+  assert.equal(llm.countFor("SYNTHESIZER"), 1, "precondition: the welcome synthesis is in flight (held open)");
+
+  // The leader backtracks into welcome and comes back out — while pass #1
+  // for welcome is still in flight.
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "backtrack_segment" }));
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+
+  holdSynthesis = false; // any later synthesis call resolves immediately
+  resolveSynthesis!(validSynthesisJson());
+  await ctx.__drain();
+  await inst.alarm(); // a later trigger must not resurrect the duplicate either
+  await ctx.__drain();
+
+  const synthMessages = (readState(inst).guideLog ?? []).filter((m) => m.kind === "synthesis" && m.segmentKey === SEGMENT);
+  const artifactWrites = db.__statements.filter((s) => s.sql.includes("session_plan_artifact"));
+  console.log(`  [measured] synthesizer calls=${llm.countFor("SYNTHESIZER")}; room messages=${synthMessages.length}; artifact rows=${artifactWrites.length}`);
+  assert.equal(llm.countFor("SYNTHESIZER"), 1, "one boundary, one paid synthesis (no duplicate Opus spend)");
+  assert.equal(synthMessages.length, 1, "exactly one synthesis message reaches the room");
+  assert.equal(artifactWrites.length, 1, "exactly one artifact row is written");
+});
+
+// ==============================================================================
+// 10) CRITIC wave 1.1 MED: a stashed pass consumed BEFORE its attempt must be
+//     re-stashed when the attempt fails (transient provider failure), and a
+//     persistent failure must stay bounded by the backoff (no livelock).
+//
+//     Reviewer's probe: stash=['welcome'] -> attempt #1 -> stash=[] -> 12
+//     alarms over an hour -> synthesizer calls stays 1. The segment's notes
+//     were permanently lost by a transient error; only a [guide-error] line
+//     remained.
+// ==============================================================================
+await check("boundary synthesis: transient failure re-stashes and recovers; persistent failure stays bounded", async () => {
+  resetClock();
+  const { inst, ctx, db } = makeHarness({ sessionKey: "synthesis-retry" });
+  let resolveEvaluator: ((text: string) => void) | undefined;
+  const evaluatorPending = new Promise<string>((resolve) => {
+    resolveEvaluator = resolve;
+  });
+  let evaluatorContent = "";
+  let synthMode: "fail" | "ok" = "fail";
+  const llm = new ScriptedLlmClient((system, content) => {
+    if (system.includes("EVALUATOR")) {
+      evaluatorContent = content;
+      return evaluatorPending; // held open → the boundary must stash
+    }
+    if (system.includes("SYNTHESIZER")) {
+      if (synthMode === "fail") throw new LlmTimeoutError(20_000, "claude-opus-4-6");
+      return validSynthesisJson();
+    }
+    if (system.includes("PACER")) return JSON.stringify({ message_to_room: "Keep the discussion tight.", rationale: "scripted" });
+    throw new Error(`unexpected agent prompt: ${system.slice(0, 48)}`);
+  });
+  injectLlm(inst, llm);
+  const phone = makeSocket("phone", "retry-phone");
+  const screen = makeSocket("screen", "retry-screen");
+
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "t-0", content: SUBMISSION_ONE }));
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "t-1", content: SUBMISSION_TWO }));
+  await flush();
+  await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  assert.deepEqual(readPending(inst), [SEGMENT], "precondition: the boundary pass is stashed while the evaluator holds the mutex");
+
+  resolveEvaluator!(evaluatorVerdictJson(evaluatorContent, "on_track"));
+  await ctx.__drain(); // stash consumed → attempt #1 → transient failure
+  const attemptsAfterFailure = llm.countFor("SYNTHESIZER");
+  console.log(
+    `  [measured] after transient failure: attempts=${attemptsAfterFailure}; pending=${JSON.stringify(readPending(inst))}; skipUntil>now=${(readHealth(inst).synthesis?.skipUntilMs ?? 0) > fakeNow}`,
+  );
+  assert.equal(attemptsAfterFailure, 1, "the stashed pass ran once and failed");
+  assert.deepEqual(readPending(inst), [SEGMENT], "the failed pass must be re-stashed, not lost");
+
+  // An hour of alarms: retries must be retried but bounded by the backoff,
+  // never hot-looped on the 30s cadence.
+  const cap = captureConsole();
+  let attemptsThroughHour = 0;
+  let synthErrorLines = 0;
+  try {
+    for (let i = 0; i < 120; i++) {
+      advanceClock(30_000);
+      await inst.alarm();
+      await ctx.__drain();
+    }
+    attemptsThroughHour = llm.countFor("SYNTHESIZER");
+    synthErrorLines = cap.errors.filter((line) => line.includes("[guide-error] agent=synthesis")).length;
+  } finally {
+    cap.restore();
+  }
+  console.log(`  [measured] after 60 min of alarms: attempts=${attemptsThroughHour}; synthesis errorLogs=${synthErrorLines}; pending=${JSON.stringify(readPending(inst))}`);
+  // Bounded by the BACKOFF, not the alarm cadence: skips double 60s→120s→
+  // 240s→ capped at 5 min, so an hour admits at most ~15 attempts (ramp +
+  // 12 at the cap). The alarm cadence alone would allow 120 — the point is
+  // that a persistent failure never hot-loops.
+  assert.ok(attemptsThroughHour <= 16, `a persistent failure must stay bounded by the backoff cap (<=16 attempts/hour), got ${attemptsThroughHour}`);
+  assert.ok(attemptsThroughHour >= 3, `the stashed pass must actually be retried after the backoff, got ${attemptsThroughHour}`);
+  assert.ok(synthErrorLines >= 3, "every retry failure must remain observable");
+  assert.deepEqual(readPending(inst), [SEGMENT], "the pass is still pending while it keeps failing");
+
+  // A later success recovers the segment's notes — they were never lost.
+  synthMode = "ok";
+  advanceClock(330_000); // past any skip window (each is capped at 5 min; the last failure was at t<=3600s)
+  assert.ok((readHealth(inst).synthesis?.skipUntilMs ?? 0) <= fakeNow, "precondition: the backoff window has fully closed");
+  await inst.alarm();
+  await ctx.__drain();
+  const synthMessages = (readState(inst).guideLog ?? []).filter((m) => m.kind === "synthesis" && m.segmentKey === SEGMENT);
+  const artifactWrites = db.__statements.filter((s) => s.sql.includes("session_plan_artifact"));
+  assert.equal(synthMessages.length, 1, `the recovered pass reaches the room with the saved-notes message (got ${synthMessages.length})`);
+  assert.equal(artifactWrites.length, 1, "and its verified artifacts are persisted");
+  assert.deepEqual(readPending(inst), [], "with nothing left pending");
+});
+
+// ==============================================================================
+// 11) CRITIC wave 1.1 LOW: the stash is durable state — it must survive a DO
+//     instance swap (the suite proved guideHealth does, never the stash), and
+//     the revived instance must be able to drain it.
+// ==============================================================================
+await check("stash: pending synthesis keys survive a DO instance swap and still run", async () => {
+  resetClock();
+  const storage: StoredMap = new Map();
+  const first = makeHarness({ sessionKey: "stash-eviction", storage });
+  let resolveEvaluator: ((text: string) => void) | undefined;
+  const evaluatorPending = new Promise<string>((resolve) => {
+    resolveEvaluator = resolve;
+  });
+  const llm1 = new ScriptedLlmClient((system) => {
+    if (system.includes("EVALUATOR")) return evaluatorPending; // held → boundary stashes
+    throw new Error(`unexpected agent prompt: ${system.slice(0, 48)}`);
+  });
+  injectLlm(first.inst, llm1);
+  const phone = makeSocket("phone", "swap-phone");
+  const screen = makeSocket("screen", "swap-screen");
+  await first.inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "s-0", content: SUBMISSION_ONE }));
+  await first.inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "s-1", content: SUBMISSION_TWO }));
+  await flush();
+  await first.inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  assert.deepEqual(readPending(first.inst), [SEGMENT], "precondition: the boundary is stashed while the evaluator holds the mutex");
+
+  // Eviction: a NEW instance over the SAME durable storage.
+  const second = makeHarness({ sessionKey: "stash-eviction", storage });
+  await second.waitReady();
+  assert.deepEqual(readPending(second.inst), [SEGMENT], "the stashed boundary pass must survive a DO instance swap");
+
+  const llm2 = new ScriptedLlmClient((system, content) => {
+    if (system.includes("SYNTHESIZER")) return validSynthesisJson();
+    if (system.includes("EVALUATOR")) return evaluatorVerdictJson(content, "on_track");
+    if (system.includes("PACER")) return JSON.stringify({ message_to_room: "x", rationale: "scripted" });
+    throw new Error(`unexpected agent prompt: ${system.slice(0, 48)}`);
+  });
+  injectLlm(second.inst, llm2);
+  await second.inst.alarm();
+  await second.ctx.__drain();
+
+  const synthMessages = (readState(second.inst).guideLog ?? []).filter((m) => m.kind === "synthesis" && m.segmentKey === SEGMENT);
+  console.log(`  [measured] revived instance synthesizer calls=${llm2.countFor("SYNTHESIZER")}; room messages=${synthMessages.length}; pending after=${JSON.stringify(readPending(second.inst))}`);
+  assert.equal(llm2.countFor("SYNTHESIZER"), 1, "the revived instance runs the stashed pass");
+  assert.equal(synthMessages.length, 1, "and the room sees the saved-notes message");
+  assert.deepEqual(readPending(second.inst), [], "nothing left pending after the drain");
+});
+
+// ==============================================================================
+// 12) CRITIC wave 1.1 LOW: stash discards must not be silent — the list-bound
+//     eviction and the guide-inactive drop both emit a diagnostic, so absence
+//     of a log is distinguishable from "nothing pending".
+// ==============================================================================
+await check("stash diagnostics: bound drop is logged with the dropped key", async () => {
+  resetClock();
+  const storage: StoredMap = new Map();
+  // Pre-seed a full stash — one more boundary pushes the oldest out.
+  storage.set("pendingSynthesis", ["k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7"]);
+  const { inst, ctx } = makeHarness({ sessionKey: "stash-bound", storage });
+  let resolveEvaluator: ((text: string) => void) | undefined;
+  const evaluatorPending = new Promise<string>((resolve) => {
+    resolveEvaluator = resolve;
+  });
+  const llm = new ScriptedLlmClient((system) => {
+    if (system.includes("EVALUATOR")) return evaluatorPending;
+    throw new Error(`unexpected agent prompt: ${system.slice(0, 48)}`);
+  });
+  injectLlm(inst, llm);
+  const phone = makeSocket("phone", "bound-phone");
+  const screen = makeSocket("screen", "bound-screen");
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "k-0", content: SUBMISSION_ONE }));
+  await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "k-1", content: SUBMISSION_TWO }));
+  await flush();
+
+  const cap = captureConsole();
+  try {
+    await inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" })); // stash → bound exceeded
+  } finally {
+    cap.restore();
+  }
+  const dropLines = cap.errors.filter((line) => line.includes("op=pending-synthesis-drop") && line.includes("reason=bound"));
+  assert.equal(dropLines.length, 1, `the bound drop must be logged: ${JSON.stringify(cap.errors)}`);
+  assert.ok(dropLines[0].includes("key=k0"), "the dropped key must be named");
+  assert.deepEqual(
+    readPending(inst),
+    ["k1", "k2", "k3", "k4", "k5", "k6", "k7", SEGMENT],
+    "oldest gives way; the newest boundary pass is kept",
+  );
+});
+
+await check("stash diagnostics: a stash stranded by an inactive guide is dropped with a diagnostic", async () => {
+  resetClock();
+  const storage: StoredMap = new Map();
+  storage.set("pendingSynthesis", [SEGMENT]);
+  const { inst, ctx, env } = makeHarness({ sessionKey: "stash-inactive", storage });
+  env.GUIDE_ENABLED = "false"; // the guide can never run on this instance
+
+  const cap = captureConsole();
+  try {
+    await inst.alarm(); // finds the stranded pass → drops it WITH a diagnostic
+    await ctx.__drain();
+    await inst.alarm(); // nothing pending now — must not re-log
+    await ctx.__drain();
+  } finally {
+    cap.restore();
+  }
+  const dropLines = cap.errors.filter((line) => line.includes("op=pending-synthesis-drop") && line.includes("reason=guide-inactive"));
+  console.log(`  [measured] guide-inactive drop logs=${dropLines.length}; pending after=${JSON.stringify(readPending(inst))}`);
+  assert.equal(dropLines.length, 1, `one diagnostic per discard, not silent (and not per-alarm spam): ${JSON.stringify(cap.errors)}`);
+  assert.ok(dropLines[0].includes(SEGMENT), "the dropped key must be named");
+  assert.deepEqual(readPending(inst), [], "the stranded stash is dropped");
+  assert.deepEqual(ctx.__storage.get("pendingSynthesis"), [], "and the drop is persisted");
+});
+
+// ==============================================================================
+// 13) CRITIC wave 1.1 ALSO (pre-existing): a PROBER failure must not discard
+//     the already-paid EVALUATOR verdict. Pre-fix the throw propagated to the
+//     DO's catch and the room got ZERO guide messages for a paid evaluation.
+// ==============================================================================
+await check("evaluator: a PROBER failure still publishes a fallback probe built from the paid verdict", async () => {
+  resetClock();
+  const { inst, ctx } = makeHarness({ sessionKey: "prober-fallback" });
+  const llm = new ScriptedLlmClient((system, content) => {
+    if (system.includes("EVALUATOR")) return evaluatorVerdictJson(content, "thin");
+    if (system.includes("PROBER")) throw new ProberParseError("PROBER returned non-JSON output: {oops");
+    throw new Error(`unexpected agent prompt: ${system.slice(0, 48)}`);
+  });
+  injectLlm(inst, llm);
+  const phone = makeSocket("phone", "pf-phone");
+  const cap = captureConsole();
+  try {
+    await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "pf-0", content: SUBMISSION_ONE }));
+    await inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "pf-1", content: SUBMISSION_TWO }));
+    await ctx.__drain();
+  } finally {
+    cap.restore();
+  }
+  const log = readState(inst).guideLog ?? [];
+  const probes = log.filter((m) => m.kind === "probe");
+  const fallbackLines = cap.errors.filter((line) => line.includes("op=prober-fallback"));
+  console.log(`  [measured] guide messages=${log.length}; probe messages=${probes.length}; prober-fallback logs=${fallbackLines.length}; prober calls=${llm.countFor("PROBER")}`);
+  assert.equal(log.length, 1, "the paid evaluator verdict must not be discarded (pre-fix: zero messages)");
+  assert.equal(probes.length, 1, "a deterministic probe fallback is published");
+  assert.ok(probes[0].text.includes("(weakest area: specific)"), `the fallback is built from the evaluator's own output: ${probes[0].text}`);
+  assert.equal(probes[0].detail, "scripted evidence", "and its detail keeps the evaluator's evidence");
+  assert.equal(fallbackLines.length, 1, "the PROBER degradation is observable in the logs");
+  assert.equal(llm.countFor("EVALUATOR"), 1, "exactly one paid evaluator call — the fallback spends nothing new");
 });
 
 Date.now = REAL_NOW;

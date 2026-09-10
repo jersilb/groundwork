@@ -126,6 +126,13 @@ export class SessionDO extends DurableObject<Env> {
    * off), oldest first. Persisted so an eviction between the boundary and
    * the retry does not lose the pass. */
   private pendingSynthesisKeys: string[] = [];
+  /** The segment whose synthesis pass is currently in flight, if any. A
+   * second boundary for the SAME segment (a normal backtrack-and-re-advance)
+   * is the boundary the running pass already covers — stashing it made the
+   * in-flight finally() synthesize the segment a second time (duplicate
+   * Opus spend, duplicate room message, duplicate artifacts). Set
+   * synchronously with the mutex claim, cleared in the pass's finally(). */
+  private synthesisInFlightKey: string | null = null;
   /** Cached LLM client — one per DO instance, not one per guide action. */
   private guideClientInstance: LlmClient | null = null;
   /** The spine plan (only meaningful when SESSION_SPINE=true and this
@@ -413,6 +420,19 @@ export class SessionDO extends DurableObject<Env> {
       console.log(
         `${GUIDE_VERDICT_LOG_PREFIX} agent=evaluator verdict=${result.output?.verdict ?? "none"} session=${s.sessionId} segment=${segmentKey} submissions=${count}`,
       );
+      if (result.proberError !== undefined) {
+        // PROBER failed after a paid verdict. The fallback probe (built from
+        // the evaluator's own output) was published and the evaluator is NOT
+        // counted failed — its verdict was valid — but the degradation must
+        // be observable.
+        const detail =
+          result.proberError instanceof Error
+            ? `${result.proberError.name}: ${result.proberError.message}`
+            : String(result.proberError);
+        console.error(
+          `${GUIDE_ERROR_LOG_PREFIX} agent=evaluator op=prober-fallback verdict=${result.output?.verdict ?? "none"} session=${s.sessionId} segment=${segmentKey} error=${detail.slice(0, 300)}`,
+        );
+      }
       if (result.message) this.publishGuideMessage(result.message);
     })()
       .catch(async (err) => {
@@ -440,7 +460,21 @@ export class SessionDO extends DurableObject<Env> {
    * notes permanently. */
   private async runBoundarySynthesis(segmentKey: string): Promise<void> {
     const llm = this.guideClient();
-    if (!llm) return;
+    if (!llm) {
+      // The guide is inactive (no key / disabled): a stashed pass can never
+      // run on this instance. Drop it WITH a diagnostic — a silent return
+      // made "nothing pending" indistinguishable from "pending work
+      // discarded", and the stranded keys would linger forever.
+      if (this.pendingSynthesisKeys.length > 0) {
+        const dropped = this.pendingSynthesisKeys;
+        this.pendingSynthesisKeys = [];
+        console.error(
+          `${GUIDE_ERROR_LOG_PREFIX} op=pending-synthesis-drop reason=guide-inactive keys=${dropped.join(",")} session=${this.state?.sessionId ?? "unknown"}`,
+        );
+        await this.persistPendingSynthesis();
+      }
+      return;
+    }
     const s = this.state!;
     const submissions = Object.values(s.submissions[segmentKey] ?? {}).map((r) => r.content);
     if (submissions.length === 0) {
@@ -450,6 +484,12 @@ export class SessionDO extends DurableObject<Env> {
       return;
     }
     if (this.guideWorkInFlight || this.guideAgentSkipped("synthesis")) {
+      // A boundary for the segment a running synthesis already covers is the
+      // SAME boundary — the in-flight pass is its synthesis. Stashing it let
+      // the in-flight finally() run the boundary a second time after a normal
+      // backtrack-and-re-advance (2x Opus spend, 2 room messages, 2 artifact
+      // rows). The running pass already covers this boundary; skip the stash.
+      if (segmentKey === this.synthesisInFlightKey) return;
       await this.stashPendingSynthesis(segmentKey);
       return;
     }
@@ -459,6 +499,7 @@ export class SessionDO extends DurableObject<Env> {
     // succeeded can never be re-run from the stash.
     this.consumePendingSynthesis(segmentKey);
     this.guideWorkInFlight = true;
+    this.synthesisInFlightKey = segmentKey;
     await this.persistPendingSynthesis();
     const work = (async () => {
       const ctx = this.buildGuideContext(segmentKey, submissions);
@@ -493,8 +534,18 @@ export class SessionDO extends DurableObject<Env> {
         /* Other guide failures stay off the room's screen — but never silent:
          * logged, counted, and backed off like every other guide agent. */
         await this.recordGuideFailure("synthesis", err);
+        /* The stash entry was consumed before this attempt; the
+         * cannot-start path is durably retried but the started-and-failed
+         * path was not — a transient provider failure (including the 20s
+         * LlmTimeoutError) silently cost this segment its notes. Re-stash
+         * so the alarm path retries after the backoff window. Safe against
+         * livelock: the per-agent skip gate bounds how often the retry can
+         * re-spend (recordGuideFailure just opened the window), and
+         * MAX_PENDING_SYNTHESIS_KEYS bounds the list. */
+        await this.stashPendingSynthesis(segmentKey);
       })
       .finally(async () => {
+        this.synthesisInFlightKey = null;
         this.guideWorkInFlight = false;
         await this.runPendingSynthesisIfIdle();
       });
@@ -506,7 +557,13 @@ export class SessionDO extends DurableObject<Env> {
   private async stashPendingSynthesis(segmentKey: string): Promise<void> {
     if (this.pendingSynthesisKeys.includes(segmentKey)) return;
     if (this.pendingSynthesisKeys.length >= MAX_PENDING_SYNTHESIS_KEYS) {
-      this.pendingSynthesisKeys.shift(); // bounded; the oldest pass gives way
+      // Bounded — the oldest pass gives way — but never silently: the drop
+      // is logged so "nothing pending" is distinguishable from "pending
+      // work discarded at the bound".
+      const dropped = this.pendingSynthesisKeys.shift();
+      console.error(
+        `${GUIDE_ERROR_LOG_PREFIX} op=pending-synthesis-drop reason=bound key=${dropped} session=${this.state?.sessionId ?? "unknown"}`,
+      );
     }
     this.pendingSynthesisKeys.push(segmentKey);
     await this.persistPendingSynthesis();
@@ -908,10 +965,19 @@ export class SessionDO extends DurableObject<Env> {
     try {
       const ctx = this.buildGuideContext(segmentKey);
       const spec = specFor(ctx.segment);
-      const { message, action } = await runPacerTick(ctx, spec, llm, this.lastPacerAction);
+      const { message, action, escalationError } = await runPacerTick(ctx, spec, llm, this.lastPacerAction);
       this.lastPacerAction = action;
       if (message) this.publishGuideMessage(message);
-      await this.recordGuideSuccess("pacer");
+      // The compress escalation is PACER's ONLY paid call. Swallowing its
+      // failure (pre-wave) meant the deterministic fallback shipped while the
+      // DO booked a SUCCESS — counters stayed 0, lastSuccessAt lied, and the
+      // skip gate could never trip on the failure it was built for. The
+      // fallback text above is unchanged; the failure is recorded honestly.
+      if (escalationError !== undefined) {
+        await this.recordGuideFailure("pacer", escalationError);
+      } else {
+        await this.recordGuideSuccess("pacer");
+      }
     } catch (err) {
       // PACER is deterministic at its core; a failure here costs one tick,
       // never the session — but it is no longer invisible (or re-spent on

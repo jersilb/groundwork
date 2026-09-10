@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Env } from "../index.ts";
 import { AnthropicLlmClient, type LlmClient } from "../guide-engine/llm-client.ts";
 import { MODELS } from "../guide-engine/models.ts";
-import { getOverdueSteps, type OverdueStepRow } from "./initiatives.ts";
+import { getOverdueSteps, MAX_INITIATIVE_TITLE_CHARS, MAX_STEP_DESCRIPTION_CHARS, truncateChars, type OverdueStepRow } from "./initiatives.ts";
 
 // COACH — build plan §5.3: "the between-session agent... nudges on overdue
 // initiative steps." Runs on schedule, not in-session — decoupled from
@@ -30,20 +30,30 @@ const NUDGE_SYSTEM_PROMPT = [
 ].join("\n");
 
 function buildNudgePrompt(step: OverdueStepRow, daysOverdue: number): string {
-  return [
-    `Initiative: "${step.initiative_title}"`,
-    `Overdue step: "${step.description}"`,
+  // Read-side caps, not validation: a row stored before the write boundary
+  // (initiatives.ts) gained its limits can be arbitrarily long, and the
+  // prompt is the one path in the repo with no applyPromptBudget. The fields
+  // are cut individually so the model still sees all four facts; the final
+  // slice is the hard ceiling that holds even if a field or a cap changes.
+  const prompt = [
+    `Initiative: "${truncateChars(step.initiative_title, MAX_INITIATIVE_TITLE_CHARS)}"`,
+    `Overdue step: "${truncateChars(step.description, MAX_STEP_DESCRIPTION_CHARS)}"`,
     `Due date: ${step.due_date}`,
     `Days overdue: ${daysOverdue}`,
   ].join("\n");
+  return truncateChars(prompt, MAX_NUDGE_PROMPT_CHARS);
 }
 
 /** Template fallback used when no LLM client is available — Tier 1
  * autonomous operation must not go silent just because personalization
- * is unavailable. */
+ * is unavailable. Reads the same stored fields as the prompt, so it carries
+ * the same read-side caps: a legacy oversized row must not produce an
+ * oversized dashboard message either. */
 export function fallbackNudge(step: OverdueStepRow, daysOverdue: number): Nudge {
+  const description = truncateChars(step.description, MAX_STEP_DESCRIPTION_CHARS);
+  const title = truncateChars(step.initiative_title, MAX_INITIATIVE_TITLE_CHARS);
   return {
-    message: `"${step.description}" (part of "${step.initiative_title}") was due ${step.due_date} — ${daysOverdue} day(s) overdue.`,
+    message: `"${description}" (part of "${title}") was due ${step.due_date} — ${daysOverdue} day(s) overdue.`,
   };
 }
 
@@ -87,6 +97,14 @@ export function parseNudgeResponse(text: string): Nudge {
 /** Recommended default: nudge the same overdue step at most once per day. */
 export const COACH_NUDGE_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
+/** Hard character ceiling on the COACH nudge prompt — the one prompt path in
+ * the repo that has no other budget (the guide agents go through
+ * applyPromptBudget; this one must not). The fields are capped individually so
+ * the model still sees all four facts; this ceiling is the backstop that holds
+ * even if a field is added or a cap is raised later. Rows stored before the
+ * write-boundary caps (initiatives.ts) existed cannot blow past it. */
+export const MAX_NUDGE_PROMPT_CHARS = 1000;
+
 /** Persisted nudge history. Small on purpose — the SQL lives in one place and
  * tests can drive the real store instead of standing in for it. */
 export interface CoachNudgeStore {
@@ -123,6 +141,23 @@ export function createD1CoachNudgeStore(env: Env): CoachNudgeStore {
       }
     },
   };
+}
+
+/** Deploy-order hazard: the Worker can go out before
+ * `wrangler d1 migrations apply groundwork` creates coach_nudge. SQLite and
+ * D1 both report that as "no such table: coach_nudge". The caller maps this
+ * one case to a 503 so a migration lag degrades the endpoint instead of
+ * 500-ing every dashboard load. The migration itself stays required. */
+export function isMissingCoachNudgeTableError(err: unknown): boolean {
+  const message =
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : err && typeof err === "object" && typeof (err as { message?: unknown }).message === "string"
+          ? ((err as { message: string }).message)
+          : "";
+  return /no such table:\s*(?:\w+\.)?coach_nudge\b/i.test(message);
 }
 
 export interface CoachNudgeItem {

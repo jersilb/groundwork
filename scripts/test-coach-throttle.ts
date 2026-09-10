@@ -15,7 +15,8 @@ import { fileURLToPath } from "node:url";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import type { Env } from "../src/index.ts";
 import { handleProgramRoute } from "../src/program/routes.ts";
-import { COACH_NUDGE_COOLDOWN_MS, generateNudgesForProgram } from "../src/program/coach.ts";
+import { COACH_NUDGE_COOLDOWN_MS, MAX_NUDGE_PROMPT_CHARS, generateNudgesForProgram } from "../src/program/coach.ts";
+import { MAX_STEP_DESCRIPTION_CHARS } from "../src/program/initiatives.ts";
 import { HeuristicFakeLlmClient } from "../src/guide-engine/testing/fake-llm-client.ts";
 
 // node:sqlite still flag-warns as experimental on Node 22. The suite has
@@ -57,12 +58,16 @@ class SqlitePreparedStatement {
 
 class FakeD1 {
   private readonly db: DatabaseSync;
+  /** Statements prepared against the throttle's table. Lets a check prove the
+   * store was genuinely consulted instead of inferring it from a response. */
+  readonly stats = { coachNudgeStatements: 0 };
 
   constructor(db: DatabaseSync) {
     this.db = db;
   }
 
   prepare(sql: string): SqlitePreparedStatement {
+    if (sql.includes("coach_nudge")) this.stats.coachNudgeStatements += 1;
     return new SqlitePreparedStatement(this.db, sql);
   }
 
@@ -89,6 +94,7 @@ interface CoachNudgesBody {
   nudges: { stepId: string; message: string }[];
   personalized: boolean;
   suppressedCount?: number;
+  error?: string;
 }
 
 /** Create the org / user / program / initiative scaffolding a nudge run needs. */
@@ -119,7 +125,10 @@ async function addOverdueStep(input: { stepId: string; initiativeId: string; des
 }
 
 /** The dashboard's call: POST /program/:id/coach/nudges, dev auth headers. */
-async function callNudges(programId: string, init?: { search?: string; body?: unknown }): Promise<{ status: number; json: CoachNudgesBody }> {
+async function callNudges(
+  programId: string,
+  init?: { search?: string; body?: unknown; env?: Env },
+): Promise<{ status: number; json: CoachNudgesBody; retryAfter: string | null }> {
   const search = init?.search ?? "";
   const url = new URL(`https://groundwork.test/program/${programId}/coach/nudges${search}`);
   const request = new Request(url, {
@@ -131,10 +140,77 @@ async function callNudges(programId: string, init?: { search?: string; body?: un
     },
     body: JSON.stringify(init?.body ?? {}),
   });
-  const response = await handleProgramRoute(request, env, url);
+  const response = await handleProgramRoute(request, init?.env ?? env, url);
   assert.ok(response, "the program router must handle POST /program/:id/coach/nudges");
-  return { status: response.status, json: (await response.json()) as CoachNudgesBody };
+  return {
+    status: response.status,
+    json: (await response.json()) as CoachNudgesBody,
+    retryAfter: response.headers.get("Retry-After"),
+  };
 }
+
+/** Simulates the deploy-order hazard: the Worker is live but
+ * `wrangler d1 migrations apply groundwork` has not run yet, so every query
+ * against the throttle's table fails the way D1 fails on a missing table.
+ * Every other table still works — that is what makes this case distinct from
+ * a genuinely broken database. */
+class MissingCoachNudgeTableD1 {
+  private readonly inner: FakeD1;
+
+  constructor(inner: FakeD1) {
+    this.inner = inner;
+  }
+
+  prepare(sql: string): unknown {
+    if (sql.includes("coach_nudge")) {
+      const missing = async (): Promise<never> => {
+        throw new Error("D1_ERROR: no such table: coach_nudge: SQLITE_ERROR");
+      };
+      const statement = { bind: () => statement, first: missing, all: missing, run: missing };
+      return statement;
+    }
+    return this.inner.prepare(sql);
+  }
+
+  exec(sql: string): void {
+    this.inner.exec(sql);
+  }
+}
+
+/** The dashboard's step form: POST /initiative/:id/step, dev auth headers. */
+async function callAddStep(
+  initiativeId: string,
+  body: Record<string, unknown>,
+): Promise<{ status: number; json: { id?: string; error?: string } }> {
+  const url = new URL(`https://groundwork.test/initiative/${initiativeId}/step`);
+  const request = new Request(url, {
+    method: "POST",
+    headers: {
+      "X-Groundwork-Dev-User": LEADER_EMAIL,
+      "X-Groundwork-Dev-Sub": "dev-sub-0001",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const response = await handleProgramRoute(request, env, url);
+  assert.ok(response, "the program router must handle POST /initiative/:id/step");
+  return { status: response.status, json: (await response.json()) as { id?: string; error?: string } };
+}
+
+async function stepDescription(stepId: string): Promise<string | null> {
+  const row = await db
+    .prepare(`SELECT description FROM initiative_step WHERE id = ?1`)
+    .bind(stepId)
+    .first<{ description: string }>();
+  return row?.description ?? null;
+}
+
+/** Records the exact user message of every nudge prompt that reaches a model. */
+const capturedPrompts: string[] = [];
+const capturingLlm = new HeuristicFakeLlmClient((params) => {
+  capturedPrompts.push(params.messages[0]?.content ?? "");
+  return JSON.stringify({ message: "captured nudge" });
+});
 
 async function nudgedAt(stepId: string): Promise<string | null> {
   const row = await db.prepare(`SELECT nudged_at FROM coach_nudge WHERE step_id = ?1`).bind(stepId).first<{ nudged_at: string }>();
@@ -191,9 +267,45 @@ await check("a second dashboard load inside the cooldown adds no duplicate nudge
   assert.deepEqual(json.nudges, [], "the same overdue steps must not be nudged twice inside the cooldown");
 });
 
-await check("refreshing with a cache-buster and a force flag is still suppressed", async () => {
-  const { json } = await callNudges("p1", { search: "?nocache=1", body: { force: true, refresh: true } });
-  assert.deepEqual(json.nudges, [], "no client-supplied parameter may bypass the server-side throttle");
+// This check used to read "refreshing with a cache-buster and a force flag is
+// still suppressed" and merely repeated the previous check — the route reads
+// no client parameters, so it passed by construction and would have kept
+// passing if a refactor started honouring a flag. It now asserts the real
+// invariant instead: a suppressed load must (1) return no nudges even when
+// the request carries arbitrary fields and params, (2) report the
+// server-side suppression count, and (3) actually query the throttle store —
+// so "no nudges" cannot mean "never looked".
+await check("a suppressed step stays suppressed under arbitrary client fields/params, and the store is consulted", async () => {
+  const queriesBefore = db.stats.coachNudgeStatements;
+  const { status, json } = await callNudges("p1", {
+    search: "?nocache=1&force=true&bypassThrottle=1&refresh=now&stepIds=s1,s2&nudgeAgain=1",
+    body: {
+      force: true,
+      refresh: true,
+      bypassThrottle: true,
+      skipCooldown: true,
+      cooldownMs: 0,
+      cacheBuster: 1_700_000_000_000,
+      limit: 999,
+      stepIds: ["s1", "s2"],
+      nudges: [],
+    },
+  });
+  assert.equal(status, 200);
+  assert.deepEqual(
+    json.nudges,
+    [],
+    "no client-supplied parameter or body field may bypass the server-side throttle",
+  );
+  assert.equal(
+    json.suppressedCount,
+    2,
+    "s1 and s2 must be reported as suppressed — a route that skipped the cooldown filter after seeing a client flag would report 0",
+  );
+  assert.ok(
+    db.stats.coachNudgeStatements > queriesBefore,
+    "the throttle store must actually be queried on a suppressed load — otherwise 'no nudges' could just mean the route never looked",
+  );
 });
 
 await check("suppressed loads do not reset the cooldown clock", async () => {
@@ -263,6 +375,128 @@ await check("a personalized nudge reaches the dashboard once, and the next load 
     "after the window, the step is nudged again",
   );
   assert.equal(llmCalls, 2, "re-nudging after the window costs exactly one more call");
+});
+
+// --- prompt ceiling: the uncapped stored field (reviewer finding 1) ---------
+
+await seedProgram({ orgId: "org-3", programId: "p3", initiativeId: "i3", initiativeTitle: "Rebuild the volunteer pipeline" });
+
+// ~600 KB, the scale an authenticated member can POST today. The marker lets
+// any assertion prove the tail was actually cut, not merely shortened.
+const OVERSIZED_DESCRIPTION = "N".repeat(600_000) + "END_OF_OVERSIZED_BODY";
+
+await check("an oversized description cannot produce an oversized nudge prompt", async () => {
+  const posted = await callAddStep("i3", { description: OVERSIZED_DESCRIPTION, dueDate: FIVE_DAYS_AGO });
+  assert.equal(
+    posted.status,
+    201,
+    "the cap must truncate, not reject — the web client's step input has no length limit of its own",
+  );
+  assert.ok(posted.json.id, "the step must still be created");
+
+  const stored = await stepDescription(posted.json.id!);
+  assert.ok(stored !== null, "the step row must exist");
+  assert.equal(
+    stored,
+    OVERSIZED_DESCRIPTION.slice(0, MAX_STEP_DESCRIPTION_CHARS),
+    `stored description must be the first ${MAX_STEP_DESCRIPTION_CHARS} chars of the submission`,
+  );
+
+  capturedPrompts.length = 0;
+  await generateNudgesForProgram(env, "p3", { llm: capturingLlm });
+  assert.equal(capturedPrompts.length, 1, "the one overdue step gets exactly one prompt");
+  assert.ok(
+    capturedPrompts[0].length <= MAX_NUDGE_PROMPT_CHARS,
+    `nudge prompt must be capped at ${MAX_NUDGE_PROMPT_CHARS} chars, got ${capturedPrompts[0].length}`,
+  );
+});
+
+await seedProgram({ orgId: "org-4", programId: "p4", initiativeId: "i4", initiativeTitle: "Rework the welcome process" });
+
+// Inserted straight into the table — this is the row that already exists when
+// the cap ships, i.e. the one the write boundary never saw.
+const LEGACY_OVERSIZED = "L".repeat(200_000) + "TAIL_MARKER_NEVER_IN_PROMPT";
+await addOverdueStep({ stepId: "s5", initiativeId: "i4", description: LEGACY_OVERSIZED, dueDate: FIVE_DAYS_AGO });
+
+await check("an oversized stored row is truncated in the prompt, and the stored value is untouched", async () => {
+  capturedPrompts.length = 0;
+  await generateNudgesForProgram(env, "p4", { llm: capturingLlm });
+  assert.equal(capturedPrompts.length, 1, "the one overdue step gets exactly one prompt");
+
+  const prompt = capturedPrompts[0];
+  assert.ok(
+    prompt.length <= MAX_NUDGE_PROMPT_CHARS,
+    `a legacy oversized row must not blow the prompt ceiling (got ${prompt.length} chars)`,
+  );
+  assert.ok(prompt.includes("L".repeat(50)), "the head of the stored description must still reach the prompt");
+  assert.ok(
+    !prompt.includes("TAIL_MARKER_NEVER_IN_PROMPT"),
+    "text past the ceiling must never be shipped to the model",
+  );
+  assert.equal(
+    await stepDescription("s5"),
+    LEGACY_OVERSIZED,
+    "building the prompt must not mutate the stored row — the cap is read-side only",
+  );
+});
+
+// --- the normal path must be untouched, byte for byte ------------------------
+
+await seedProgram({ orgId: "org-5", programId: "p5", initiativeId: "i5", initiativeTitle: "Contact the lapsed volunteers" });
+const NORMAL_DESCRIPTION = "Draft the team's follow-up email and confirm the 9:00 a.m. slot";
+await addOverdueStep({ stepId: "s6", initiativeId: "i5", description: NORMAL_DESCRIPTION, dueDate: THREE_DAYS_AGO });
+
+await check("a normal description is unchanged byte-for-byte in the prompt", async () => {
+  capturedPrompts.length = 0;
+  await generateNudgesForProgram(env, "p5", { llm: capturingLlm });
+  assert.equal(capturedPrompts.length, 1, "the one overdue step gets exactly one prompt");
+  assert.ok(
+    capturedPrompts[0].includes(`Overdue step: "${NORMAL_DESCRIPTION}"`),
+    "a within-cap description must reach the prompt exactly as stored — no trimming, no escaping, no marker",
+  );
+  assert.ok(
+    capturedPrompts[0].includes(`Initiative: "Contact the lapsed volunteers"`),
+    "a within-cap title is likewise unchanged",
+  );
+});
+
+// The template path (no LLM key configured) reads the same stored field, so
+// the same oversized row must not produce an oversized dashboard message.
+const OVERSIZED_FALLBACK = "F".repeat(150_000) + "FALLBACK_TAIL_MARKER";
+await addOverdueStep({ stepId: "s7", initiativeId: "i5", description: OVERSIZED_FALLBACK, dueDate: THREE_DAYS_AGO });
+
+await check("the template fallback stays bounded for an oversized stored row", async () => {
+  const result = await generateNudgesForProgram(env, "p5", { llm: null });
+  assert.deepEqual(result.nudges.map((n) => n.stepId), ["s7"], "s6 was nudged; only the new oversized step goes out");
+
+  const message = result.nudges[0]?.message ?? "";
+  assert.ok(
+    message.length <= MAX_NUDGE_PROMPT_CHARS,
+    `the fallback message must stay under the nudge ceiling too (got ${message.length} chars)`,
+  );
+  assert.ok(!message.includes("FALLBACK_TAIL_MARKER"), "text past the ceiling must not reach the dashboard");
+  assert.equal(await stepDescription("s7"), OVERSIZED_FALLBACK, "the fallback path must not mutate the stored row either");
+});
+
+// --- deploy order: missing migration must fail soft, not 500 ----------------
+
+await check("a missing coach_nudge table (migration not yet applied) returns 503, not an exception", async () => {
+  const preMigrationEnv = { DB: new MissingCoachNudgeTableD1(db) } as unknown as Env;
+  const { status, json, retryAfter } = await callNudges("p1", { env: preMigrationEnv });
+  assert.equal(
+    status,
+    503,
+    "a Worker that deployed ahead of `wrangler d1 migrations apply` must degrade to 503 — an unhandled throw 500s every dashboard load",
+  );
+  assert.ok(
+    typeof json.error === "string" && json.error.length > 0,
+    "the 503 body must carry a human-readable error",
+  );
+  assert.ok(
+    /migration|not applied|not ready|not available/i.test(json.error),
+    `the 503 body must say why (got: ${String(json.error)})`,
+  );
+  assert.equal(retryAfter, "60", "the 503 must tell the client when to retry");
 });
 
 console.log(`\n${checksRun} check(s) passed.`);
