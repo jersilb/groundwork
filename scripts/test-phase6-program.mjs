@@ -5,9 +5,17 @@
 // physical device, no human judgment, and no service this sandbox can't
 // reach — it's genuinely fully verifiable here.
 import { spawn } from "node:child_process";
+import { appendFileSync, mkdirSync } from "node:fs";
+import path from "node:path";
+import { fetchWithShield, printInfraFlakeSummary } from "./lib/infra-flake-shield.mjs";
 
 const PORT = 8794;
 const BASE = `http://127.0.0.1:${PORT}`;
+
+// [HOLMES-INSTRUMENTATION] tee wrangler dev output so a mid-test 500 leaves
+// its server-side story behind (this file previously drained the pipe).
+const LOG_PATH = path.join(process.env.HOLMES_LOG_DIR || "/tmp/holmes-gw/evidence", `phase6-${process.pid}.wrangler.log`);
+try { mkdirSync(path.dirname(LOG_PATH), { recursive: true }); } catch { /* exists */ }
 
 const DEV_AUTH_HEADERS = {
   "X-Groundwork-Dev-User": "dev@groundwork.local",
@@ -32,14 +40,23 @@ async function waitForServer(timeoutMs) {
   return false;
 }
 
-async function postJson(path, body) {
-  const res = await fetch(`${BASE}${path}`, {
-    method: "POST",
-    headers: { ...DEV_AUTH_HEADERS, "content-type": "application/json" },
-    body: JSON.stringify(body ?? {}),
-  });
-  const json = await res.json().catch(() => ({}));
-  return { res, json };
+async function postJson(path_, body) {
+  // [INFRA-FLAKE-SHIELD] ONE loud retry on the exact upstream dev-server
+  // transport signature (wrangler ProxyWorker connection drop) — see
+  // scripts/lib/infra-flake-shield.mjs. Never retries app errors.
+  const attempt = await fetchWithShield(
+    () => fetch(`${BASE}${path_}`, {
+      method: "POST",
+      headers: { ...DEV_AUTH_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+    }),
+    `POST ${path_}`,
+  );
+  if (attempt.err) throw attempt.err;
+  const { res, text } = attempt;
+  let json = {};
+  try { json = JSON.parse(text); } catch { /* non-JSON body (dev 500 page) */ }
+  return { res, json, text };
 }
 
 async function main() {
@@ -48,8 +65,9 @@ async function main() {
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   });
-  wrangler.stdout.on("data", () => {});
-  wrangler.stderr.on("data", () => {});
+  // [HOLMES-INSTRUMENTATION] tee to disk instead of silently draining.
+  wrangler.stdout.on("data", (d) => { try { appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${String(d)}`); } catch { /* ignore */ } });
+  wrangler.stderr.on("data", (d) => { try { appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${String(d)}`); } catch { /* ignore */ } });
 
   let exitCode = 1;
 
@@ -169,6 +187,7 @@ async function main() {
       wrangler.kill("SIGKILL");
     }
     await sleep(500);
+    printInfraFlakeSummary();
   }
 
   process.exit(exitCode);

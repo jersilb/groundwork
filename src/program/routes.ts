@@ -161,6 +161,24 @@ async function route(request: Request, env: Env, url: URL): Promise<Response | n
     const orgId = await requireLabSessionOrg(env, m[1]);
     if (!orgId || !(await requireOrgMember(env, auth, orgId))) return forbidden();
     const body = await json<{ consentedBy: string }>(request);
+    // [FIX — HOLMES 2026-09-12] lab_session.consent_recorded_by carries
+    // REFERENCES user(id). The value arrives from the client unvalidated, so
+    // any non-user-id (e.g. the free-text display name the LabSchedule UI
+    // sends) violated the FK inside D1 and surfaced as an unhandled 500 on
+    // client input. Validate the reference and answer a clean 400 instead.
+    // NOTE for a product/schema decision: LabSchedule.tsx sends a human name
+    // ("who is confirming this session?"), which can never satisfy this FK —
+    // either the UI should send the user id or the column should store the
+    // name without the FK. Until that decision lands, this route's contract
+    // is: consentedBy must be a user id in the owning org.
+    if (!body.consentedBy) return Response.json({ error: "consentedBy is required" }, { status: 400 });
+    const consentUser = await env.DB
+      .prepare(`SELECT id FROM user WHERE id = ?1 AND org_id = ?2 LIMIT 1`)
+      .bind(body.consentedBy, orgId)
+      .first<{ id: string }>();
+    if (!consentUser) {
+      return Response.json({ error: "consentedBy must be a user id in this organization" }, { status: 400 });
+    }
     await recordConsent(env, m[1], body.consentedBy);
     return Response.json({ status: "ok" });
   }

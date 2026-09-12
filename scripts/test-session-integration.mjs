@@ -18,11 +18,19 @@
 // The whole test runs in its own --persist-to directory so it never
 // touches (or races with) another wrangler instance's .wrangler/state.
 import { spawn, execFileSync } from "node:child_process";
-import { readdirSync, rmSync, mkdirSync } from "node:fs";
+import { readdirSync, rmSync, mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import { fetchWithShield, printInfraFlakeSummary, isTransportClassFailure } from "./lib/infra-flake-shield.mjs";
 
-const PORT = 8793;
+// [HOLMES-INSTRUMENTATION] Tee wrangler dev stdout/stderr to a file so a
+// mid-test 500 leaves its server-side log behind. The rolling in-memory
+// buffer is printed on failure; the file survives the run.
+const HOLMES_LOG_DIR = process.env.HOLMES_LOG_DIR || "/tmp/holmes-gw/evidence";
+const HOLMES_RUN_TAG = `${process.pid}-${Date.now()}`;
+try { mkdirSync(HOLMES_LOG_DIR, { recursive: true }); } catch { /* exists */ }
+
+const PORT = Number(process.env.GW_PORT ?? 8793);
 const BASE = `http://127.0.0.1:${PORT}`;
 const DEV_AUTH_HEADERS = {
   "X-Groundwork-Dev-User": "dev@groundwork.local",
@@ -79,8 +87,18 @@ function spawnWrangler(logLines) {
   // Drain pipes continuously — an unread pipe fills its OS buffer and
   // blocks wrangler dev entirely. Do not remove. Also keep a rolling log
   // so a failed startup is diagnosable.
-  wr.stdout.on("data", (d) => { logLines.push(String(d)); });
-  wr.stderr.on("data", (d) => { logLines.push(String(d)); });
+  // [HOLMES-INSTRUMENTATION] tee to disk; stamp each chunk with wall time.
+  const logPath = path.join(HOLMES_LOG_DIR, `wrangler-dev-${HOLMES_RUN_TAG}.log`);
+  wr.holmesLogPath = logPath;
+  appendFileSync(logPath, `\n=== wrangler spawn (pid ${wr.pid}) at ${new Date().toISOString()} port ${PORT} ===\n`);
+  wr.stdout.on("data", (d) => {
+    logLines.push(String(d));
+    appendFileSync(logPath, `[stdout ${new Date().toISOString()}] ${String(d)}`);
+  });
+  wr.stderr.on("data", (d) => {
+    logLines.push(String(d));
+    appendFileSync(logPath, `[stderr ${new Date().toISOString()}] ${String(d)}`);
+  });
   return wr;
 }
 
@@ -125,14 +143,40 @@ async function waitForCondition(fn, timeoutMs, label) {
   throw new Error(`timed out waiting for: ${label}`);
 }
 
-async function postJson(p, body) {
-  const res = await fetch(`${BASE}${p}`, {
-    method: "POST",
-    headers: { ...DEV_AUTH_HEADERS, "content-type": "application/json" },
-    body: JSON.stringify(body ?? {}),
-  });
-  const json = await res.json().catch(() => ({}));
-  return { res, json };
+// [INFRA-FLAKE] restart-resume hook, set by main() once the dev server is
+// up. If a request dies with the upstream transport signature (including a
+// full dev-server exit — workers-sdk #15203/#15452/#15317), the hook brings
+// the server back (same --persist-to dir, so D1 state survives) and the
+// request is retried exactly once. Transport-class only; app failures are
+// never masked.
+let resumeHook = null;
+
+async function postJson(p, body, resumed = false) {
+  // [INFRA-FLAKE-SHIELD] the dev server can drop the proxy↔runtime
+  // connection mid-request (upstream wrangler bug); a transport-class
+  // failure gets ONE loud retry here, never in app code.
+  const attempt = await fetchWithShield(
+    () => fetch(`${BASE}${p}`, {
+      method: "POST",
+      headers: { ...DEV_AUTH_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+    }),
+    `POST ${p}`,
+  );
+  if (attempt.err) {
+    if (!resumed && resumeHook && (await resumeHook())) return postJson(p, body, true);
+    throw attempt.err;
+  }
+  const { res, text } = attempt;
+  if (!resumed && isTransportClassFailure({ status: res.status, body: text }) && resumeHook) {
+    if (await resumeHook()) return postJson(p, body, true);
+  }
+  // [HOLMES-INSTRUMENTATION] keep the RAW body, not just a parsed JSON —
+  // an unhandled dev-server 500 is not JSON, and postJson's old
+  // `.json().catch(() => ({}))` threw that evidence away.
+  let json = {};
+  try { json = JSON.parse(text); } catch { /* non-JSON body (dev 500) */ }
+  return { res, json, text };
 }
 
 /** Run a query against the test's isolated local D1 (wrangler must be
@@ -166,6 +210,7 @@ function doDirFiles() {
 async function main() {
   let wrangler = null;
   let exitCode = 1;
+  let restarts = 0;
   const wranglerLog = [];
   try {
     mkdirSync(PERSIST_DIR, { recursive: true });
@@ -182,6 +227,24 @@ async function main() {
     if (!(await waitForServer(40_000))) {
       throw new Error(`wrangler dev (instance 1) did not become healthy. Log tail:\n${wranglerLog.slice(-40).join("")}`);
     }
+
+    // [INFRA-FLAKE] restart-resume: the upstream dev-server transport defect
+    // can kill wrangler dev mid-run (see evidence pack). Bring it back —
+    // same persist dir, so all D1/DO state survives — and let postJson retry
+    // the single request that died. Transport-class only, never masks app
+    // failures (workers-sdk #15203/#15452/#15317).
+    resumeHook = async () => {
+      try { if ((await fetch(`${BASE}/health`)).ok) return false; } catch { /* down */ }
+      restarts += 1;
+      console.error(`[INFRA-FLAKE] dev server down — RESTART #${restarts} (upstream wrangler transport defect, workers-sdk #15203/#15452/#15317; not an app failure)`);
+      if (wrangler) killWrangler(wrangler);
+      await waitForPortFree(PORT, 10_000);
+      wrangler = spawnWrangler(wranglerLog);
+      if (!(await waitForServer(60_000))) {
+        throw new Error(`dev server did not come back after restart #${restarts}. Log tail:\n${wranglerLog.slice(-40).join("")}`);
+      }
+      return true;
+    };
 
     console.log(`\n[1] Reconnect/replay on session ${S1}`);
     const screen = await connectClient("screen", "device-screen", S1);
@@ -360,22 +423,56 @@ async function main() {
     }
     console.log("PASS: screen connect without the room's screen token is rejected.");
 
-    const labScreen = await connectClient("screen", "lab-screen", expectedKey, opened.json.screenToken);
-    await waitForCondition(() => labScreen.states.length >= 1, 5000, "lab room state");
-    if (!Array.isArray(latestState(labScreen).guideLog)) {
-      throw new Error("session state must carry a guideLog array (guide disabled locally => empty)");
+    // [INFRA-FLAKE] The lab-room section is WS-driven; if the upstream defect
+    // kills the dev server mid-section, HTTP-level retries cannot help (the
+    // socket is gone). Restart the server and re-run the section: the room
+    // state is D1-checkpointed and the calls here are idempotent by design
+    // (clientUuid dedup; "advance to index 1" already-satisfied), so a retry
+    // cannot mask an app failure — a genuinely broken room fails the section
+    // on every attempt.
+    async function labRoomSection() {
+      const labScreen = await connectClient("screen", "lab-screen", expectedKey, opened.json.screenToken);
+      await waitForCondition(() => labScreen.states.length >= 1, 5000, "lab room state");
+      if (!Array.isArray(latestState(labScreen).guideLog)) {
+        throw new Error("session state must carry a guideLog array (guide disabled locally => empty)");
+      }
+      console.log("PASS: session state carries the guideLog field (guide disabled locally => empty).");
+      send(labScreen, { type: "submit", segmentKey: "welcome", clientUuid: "lab-uuid-1", content: "Real session submission" });
+      await waitForCondition(() => latestState(labScreen).submissionCounts.welcome === 1, 5000, "lab submission counted");
+      send(labScreen, { type: "advance_segment" });
+      await waitForCondition(() => latestState(labScreen).currentSegmentIndex === 1, 5000, "lab advance");
+      console.log("PASS: real lab room accepts connects on /session/lab-<id>/connect and runs the fake-lab segments.");
+      labScreen.ws.close();
     }
-    console.log("PASS: session state carries the guideLog field (guide disabled locally => empty).");
-    send(labScreen, { type: "submit", segmentKey: "welcome", clientUuid: "lab-uuid-1", content: "Real session submission" });
-    await waitForCondition(() => latestState(labScreen).submissionCounts.welcome === 1, 5000, "lab submission counted");
-    send(labScreen, { type: "advance_segment" });
-    await waitForCondition(() => latestState(labScreen).currentSegmentIndex === 1, 5000, "lab advance");
-    console.log("PASS: real lab room accepts connects on /session/lab-<id>/connect and runs the fake-lab segments.");
-    labScreen.ws.close();
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await labRoomSection();
+        break;
+      } catch (err) {
+        const restarted = attempt === 1 ? await resumeHook() : false;
+        if (!restarted) throw err;
+        console.error(`[INFRA-FLAKE] lab-room section died while the dev server was down — retrying the (idempotent) section after RESTART #${restarts} (workers-sdk #15203/#15452)`);
+      }
+    }
 
     await postJson(`/lab-session/${labId}/complete`, {});
     const reopenCompleted = await postJson(`/lab-session/${labId}/open`, {});
     if (reopenCompleted.res.status !== 409) {
+      // [HOLMES-INSTRUMENTATION] capture the full failure signature (status,
+      // headers, raw body) and do ONE diagnostic retry so we can tell a
+      // one-shot transport drop from a sticky server-state failure.
+      const sig = {
+        ts: new Date().toISOString(),
+        status: reopenCompleted.res.status,
+        headers: Object.fromEntries(reopenCompleted.res.headers.entries()),
+        body: reopenCompleted.text.slice(0, 4000),
+      };
+      console.error(`[HOLMES-500-SIGNATURE] ${JSON.stringify(sig)}`);
+      const sigPath = path.join(HOLMES_LOG_DIR, `reopen-500-signature-${HOLMES_RUN_TAG}.json`);
+      appendFileSync(sigPath, JSON.stringify(sig, null, 2) + "\n");
+      const retry = await postJson(`/lab-session/${labId}/open`, {});
+      console.error(`[HOLMES-500-RETRY] status=${retry.res.status} body=${retry.text.slice(0, 500)}`);
+      appendFileSync(sigPath, `RETRY: status=${retry.res.status} body=${retry.text.slice(0, 500)}\n`);
       throw new Error(`expected 409 reopening a completed lab, got ${reopenCompleted.res.status} ${JSON.stringify(reopenCompleted.json)}`);
     }
     console.log("PASS: completed lab_session cannot be reopened (409, phase gate).");
@@ -399,11 +496,27 @@ async function main() {
     exitCode = 0;
   } catch (err) {
     console.error("TEST FAILED:", err.message ?? err);
+    // [HOLMES-INSTRUMENTATION] dump the tail of the teed wrangler log so the
+    // server-side story of a mid-test 500 is visible in the run output.
+    const tail = wranglerLog.slice(-80).join("");
+    console.error(`--- wrangler log tail (last ${Math.min(80, wranglerLog.length)} chunks; full file: ${HOLMES_LOG_DIR}/wrangler-dev-${HOLMES_RUN_TAG}.log) ---`);
+    console.error(tail);
+    try {
+      writeFileSync(
+        path.join(HOLMES_LOG_DIR, `failure-${HOLMES_RUN_TAG}.txt`),
+        `TEST FAILED: ${err.message ?? err}\n\n--- wrangler log tail ---\n${tail}\n`,
+      );
+    } catch { /* best effort */ }
     exitCode = 1;
   } finally {
     if (wrangler) killWrangler(wrangler);
     rmSync(PERSIST_DIR, { recursive: true, force: true });
     await sleep(500);
+    resumeHook = null;
+    if (restarts > 0) {
+      console.error(`[INFRA-FLAKE] NOTE: ${restarts} dev-server restart(s) during this run — upstream wrangler dev transport defect was present (workers-sdk #15203/#15452/#15317); app behavior unaffected.`);
+    }
+    printInfraFlakeSummary();
   }
   process.exit(exitCode);
 }

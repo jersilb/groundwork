@@ -34,6 +34,7 @@
     "test:phase5": "node scripts/test-phase5-synthesis.mjs",
     "test:phase6": "node scripts/test-phase6-program.mjs",
     "test:session-integration": "node scripts/test-session-integration.mjs",
+    "test:reopen-regression": "node scripts/test-reopen-regression.mjs",
     "test:spine-integration": "node scripts/test-spine-integration.mjs",
     "test:stripe-webhook": "node --experimental-strip-types scripts/test-stripe-webhook-verification.ts",
     "test:phase7": "node scripts/test-phase7-pwa.mjs",

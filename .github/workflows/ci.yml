@@ -72,6 +72,12 @@ jobs:
   session-integration:
     name: Session integration — reconnect/replay, leader override, lab wiring
     runs-on: ubuntu-latest
+    # [HOLMES 2026-09-12] The dev server can emit an empty `✘ [ERROR]` and
+    # exit on an intermittent transport drop (upstream wrangler ProxyWorker
+    # defect — workers-sdk #15203/#15452/#15317); the real stack only exists
+    # in wrangler's debug log, so capture it and upload it below.
+    env:
+      WRANGLER_LOG: debug
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -85,8 +91,18 @@ jobs:
         run: npm run build:web
       - name: Run the reconnect/replay + leader + lab-wiring test
         run: node scripts/test-session-integration.mjs
+      - name: Reopen-completed-lab regression (tight 409 loop — must never 500)
+        run: node scripts/test-reopen-regression.mjs
       - name: Session-spine integration smoke (SESSION_SPINE=true, full protocol walk)
         run: node scripts/test-spine-integration.mjs
+      - name: Upload wrangler dev logs (intermittent dev-server 500 diagnosis)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wrangler-logs-session-integration
+          path: ~/.wrangler/logs
+          if-no-files-found: ignore
+          retention-days: 7
 
   phase2-guide-engine:
     name: Phase 2 gate — PACER/EVALUATOR/PROBER + segment spec compiler
@@ -146,6 +162,10 @@ jobs:
   phase4-audio-pipeline:
     name: Phase 4 gate — consent, kill switch, R2/D1/Queue, graceful AI failure
     runs-on: ubuntu-latest
+    # [HOLMES 2026-09-12] see session-integration job: capture wrangler debug
+    # logs for intermittent dev-server transport failures.
+    env:
+      WRANGLER_LOG: debug
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -159,6 +179,14 @@ jobs:
         run: npm run build:web
       - name: Run the audio pipeline test (Workers AI runs remote-only; not exercised here)
         run: node scripts/test-phase4-audio.mjs
+      - name: Upload wrangler dev logs (intermittent dev-server 500 diagnosis)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wrangler-logs-phase4
+          path: ~/.wrangler/logs
+          if-no-files-found: ignore
+          retention-days: 7
 
   phase5-synthesis:
     name: Phase 5 gate — SYNTHESIZER provenance verification, artifact versioning
@@ -191,6 +219,10 @@ jobs:
   phase6-program-layer:
     name: Phase 6 gate — simulated org completes Lab 1, gets a nudge, runs a review
     runs-on: ubuntu-latest
+    # [HOLMES 2026-09-12] see session-integration job: capture wrangler debug
+    # logs for intermittent dev-server transport failures.
+    env:
+      WRANGLER_LOG: debug
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -207,6 +239,14 @@ jobs:
       # [release-readiness fix] hardening suite for the D1-backed COACH throttle.
       - name: COACH nudge throttle tests (persisted throttle, 503 on missing table)
         run: npm run test:coach-throttle
+      - name: Upload wrangler dev logs (intermittent dev-server 500 diagnosis)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wrangler-logs-phase6
+          path: ~/.wrangler/logs
+          if-no-files-found: ignore
+          retention-days: 7
 
   phase7-commerce-pwa:
     name: Phase 7 gate — Stripe webhook verification, PWA installability

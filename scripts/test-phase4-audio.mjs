@@ -15,6 +15,9 @@
 // duration — Workers AI needs live Cloudflare access this sandbox is
 // network-blocked from reaching, credentials notwithstanding.
 import { spawn, execFileSync } from "node:child_process";
+import { appendFileSync, mkdirSync } from "node:fs";
+import path from "node:path";
+import { fetchWithShield, printInfraFlakeSummary } from "./lib/infra-flake-shield.mjs";
 
 const PORT = 8796;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -67,8 +70,21 @@ async function main() {
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   });
-  wrangler.stdout.on("data", () => {});
-  wrangler.stderr.on("data", () => {});
+  // [HOLMES-INSTRUMENTATION] tee to disk instead of silently draining.
+  const logPath = path.join(process.env.HOLMES_LOG_DIR || "/tmp/holmes-gw/evidence", `phase4-${process.pid}.wrangler.log`);
+  try { mkdirSync(path.dirname(logPath), { recursive: true }); } catch { /* exists */ }
+  const tee = (d) => { try { appendFileSync(logPath, `[${new Date().toISOString()}] ${String(d)}`); } catch { /* ignore */ } };
+  wrangler.stdout.on("data", tee);
+  wrangler.stderr.on("data", tee);
+
+  // [INFRA-FLAKE-SHIELD] ONE loud retry on the exact upstream dev-server
+  // transport signature (wrangler ProxyWorker connection drop). Any other
+  // failure passes through untouched.
+  const sFetch = async (url, init, label) => {
+    const attempt = await fetchWithShield(() => fetch(url, init), label);
+    if (attempt.err) throw attempt.err;
+    return attempt.res;
+  };
 
   let exitCode = 1;
   let chunkId = null;
@@ -78,27 +94,29 @@ async function main() {
     if (!up) throw new Error("wrangler dev did not become healthy in time");
     console.log("Server up.");
 
-    const noConsentRes = await fetch(
+    const noConsentRes = await sFetch(
       `${BASE}/session/${SESSION_KEY}/audio/chunk?segmentKey=welcome&sequence=0&offsetMs=0`,
       { method: "POST", headers: DEV_AUTH_HEADERS, body: new Uint8Array([1, 2, 3, 4]) },
+      "chunk-no-consent",
     );
     if (noConsentRes.status !== 403) {
       throw new Error(`FAIL: expected 403 without consent, got ${noConsentRes.status}`);
     }
     console.log("PASS: chunk upload rejected with 403 — no consent recorded yet.");
 
-    const consentRes = await fetch(`${BASE}/session/${SESSION_KEY}/audio/consent`, {
+    const consentRes = await sFetch(`${BASE}/session/${SESSION_KEY}/audio/consent`, {
       method: "POST",
       headers: { ...DEV_AUTH_HEADERS, "content-type": "application/json" },
       body: JSON.stringify({ consentedBy: "test-leader" }),
-    });
+    }, "audio-consent");
     if (!consentRes.ok) throw new Error(`FAIL: consent POST failed with ${consentRes.status}`);
     console.log("PASS: consent recorded.");
 
     const chunkBody = new Uint8Array(1000).fill(42); // fake audio bytes
-    const uploadRes = await fetch(
+    const uploadRes = await sFetch(
       `${BASE}/session/${SESSION_KEY}/audio/chunk?segmentKey=welcome&sequence=0&offsetMs=0`,
       { method: "POST", headers: DEV_AUTH_HEADERS, body: chunkBody },
+      "chunk-upload-0",
     );
     if (!uploadRes.ok) throw new Error(`FAIL: chunk upload failed with ${uploadRes.status}`);
     const uploadJson = await uploadRes.json();
@@ -108,22 +126,24 @@ async function main() {
     chunkId = uploadJson.chunkId;
     console.log(`PASS: chunk uploaded to real local R2, D1 row created, queued for transcription (chunkId=${chunkId}).`);
 
-    const uploadRes2 = await fetch(
+    const uploadRes2 = await sFetch(
       `${BASE}/session/${SESSION_KEY}/audio/chunk?segmentKey=welcome&sequence=1&offsetMs=60000`,
       { method: "POST", headers: DEV_AUTH_HEADERS, body: chunkBody },
+      "chunk-upload-1",
     );
     if (!uploadRes2.ok) throw new Error(`FAIL: second chunk upload failed with ${uploadRes2.status}`);
     console.log("PASS: second chunk uploaded (sequence=1) — zero lost chunks so far.");
 
-    const killRes = await fetch(`${BASE}/session/${SESSION_KEY}/audio/kill-switch`, {
+    const killRes = await sFetch(`${BASE}/session/${SESSION_KEY}/audio/kill-switch`, {
       method: "POST",
       headers: { ...DEV_AUTH_HEADERS, "content-type": "application/json" },
       body: JSON.stringify({ engaged: true }),
-    });
+    }, "kill-switch");
     if (!killRes.ok) throw new Error(`FAIL: kill-switch POST failed with ${killRes.status}`);
-    const blockedRes = await fetch(
+    const blockedRes = await sFetch(
       `${BASE}/session/${SESSION_KEY}/audio/chunk?segmentKey=welcome&sequence=2&offsetMs=120000`,
       { method: "POST", headers: DEV_AUTH_HEADERS, body: chunkBody },
+      "chunk-upload-blocked",
     );
     if (blockedRes.status !== 403) {
       throw new Error(`FAIL: expected 403 after kill switch engaged, got ${blockedRes.status}`);
@@ -144,6 +164,7 @@ async function main() {
       wrangler.kill("SIGKILL");
     }
     await sleep(800);
+    printInfraFlakeSummary();
   }
 
   if (exitCode === 0 && chunkId) {
