@@ -59,9 +59,12 @@ class SqlitePreparedStatement {
     return { results: this.db.prepare(this.sql).all(...(this.params as SQLInputValue[])) as T[] };
   }
 
-  async run(): Promise<{ success: boolean }> {
-    this.db.prepare(this.sql).run(...(this.params as SQLInputValue[]));
-    return { success: true };
+  async run(): Promise<{ success: boolean; meta: { changes: number } }> {
+    const result = this.db.prepare(this.sql).run(...(this.params as SQLInputValue[]));
+    // `changes` is the number of rows the statement actually modified —
+    // what the nudge claim's atomicity rides on (an ON CONFLICT ... DO
+    // UPDATE ... WHERE that matches nothing reports 0, per SQLite).
+    return { success: true, meta: { changes: Number(result.changes) } };
   }
 }
 
@@ -448,6 +451,55 @@ await check("a personalized nudge reaches the dashboard once, and the next load 
     "after the window, the step is nudged again",
   );
   assert.equal(llmCalls, 2, "re-nudging after the window costs exactly one more call");
+});
+
+// --- concurrency: overlapping loads must not both pay (CRITIC F1) -----------
+//
+// The dashboard fires this endpoint on every load, and two loads genuinely
+// overlap: load B arrives while load A is still waiting on the model. Pre-fix
+// the throttle was read-then-act — B read "nothing nudged yet" (A records its
+// nudge only AFTER its LLM call returns, seconds later) and paid again. The
+// critic's probe measured 2 LLM calls and a duplicate nudge for one step.
+// Fix: claim-before-generate. The claim is one atomic statement per step, so
+// B's claim conflicts with A's, claims nothing, and B generates nothing.
+
+await seedProgram({ orgId: "org-8", programId: "p8", initiativeId: "i8", initiativeTitle: "Rebuild the volunteer pipeline" });
+await addOverdueStep({ stepId: "s8", initiativeId: "i8", description: "Call the lapsed volunteers", dueDate: FIVE_DAYS_AGO });
+
+await check("overlapping loads for one step: exactly one LLM call and no duplicate nudge", async () => {
+  // Real model latency, not an instant fake: the overlap window this check
+  // exists for is "second request arrives while the first is still paying".
+  // The client also snapshots the throttle state at the moment its paid call
+  // STARTS, which pins the claim ordering (claim must land before the call).
+  class SlowRecordingNudgeLlm {
+    calls = 0;
+    rowAtCallStart: string | null | undefined;
+    async complete(): Promise<{ text: string }> {
+      this.calls += 1;
+      this.rowAtCallStart = await nudgedAt("s8");
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      return { text: JSON.stringify({ message: "personalized nudge" }) };
+    }
+  }
+  const slowLlm = new SlowRecordingNudgeLlm();
+
+  const loadA = generateNudgesForProgram(env, "p8", { llm: slowLlm });
+  await new Promise((resolve) => setTimeout(resolve, 10)); // B arrives inside A's model window
+  const loadB = generateNudgesForProgram(env, "p8", { llm: slowLlm });
+  const [a, b] = await Promise.all([loadA, loadB]);
+
+  const delivered = [...a.nudges, ...b.nudges].filter((nudge) => nudge.stepId === "s8");
+  console.log(
+    `  [measured] overlapping: A nudges=${a.nudges.length} B nudges=${b.nudges.length} total LLM calls=${slowLlm.calls}`,
+  );
+  assert.equal(slowLlm.calls, 1, "two overlapping loads must not both pay for the same step (pre-fix: 2 calls)");
+  assert.equal(delivered.length, 1, "the same step must not be nudged twice to the dashboard");
+  assert.equal(a.nudges.length + b.nudges.length, 1, "exactly one load carries the nudge; the other claims nothing");
+  assert.ok(
+    slowLlm.rowAtCallStart !== null && slowLlm.rowAtCallStart !== undefined,
+    "the step must be claimed before the paid call starts — pre-fix the row only appears after the model returns",
+  );
+  assert.equal(a.suppressedCount + b.suppressedCount, 1, "the losing load reports the step as suppressed");
 });
 
 // --- prompt ceiling: the uncapped stored field (reviewer finding 1) ---------

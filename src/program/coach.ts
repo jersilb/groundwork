@@ -92,6 +92,11 @@ export function parseNudgeResponse(text: string): Nudge {
 // The window lives in D1, not in the dashboard, so no client can bypass it.
 // One nudge per step per cooldown; a step that has never been nudged is not
 // affected by the cooldown on any other step.
+//
+// The read-check-reserve step is a single atomic statement per step (see
+// claimNudges below): two dashboard loads that overlap in time still produce
+// one nudge and one paid call. A plain read-then-act let the second load
+// observe "nothing recorded yet" while the first was inside its LLM call.
 // ---------------------------------------------------------------------------
 
 /** Recommended default: nudge the same overdue step at most once per day. */
@@ -110,6 +115,12 @@ export const MAX_NUDGE_PROMPT_CHARS = 1000;
 export interface CoachNudgeStore {
   /** Step ids nudged within the cooldown window that ends at `now`. */
   recentlyNudgedStepIds(programId: string, now: Date): Promise<Set<string>>;
+  /** Atomically claim the steps this load will generate a nudge for. One
+   * statement per step; the claim succeeds only while the step has no row
+   * inside the cooldown window. Returns exactly the steps this caller claimed
+   * — a step that lost the race (or is still inside its cooldown) is not in
+   * the result, and the caller must not generate for it. */
+  claimNudges(programId: string, stepIds: readonly string[], at: Date): Promise<Set<string>>;
   /** Record a nudge for each step, replacing any earlier row for that step. */
   recordNudges(programId: string, stepIds: readonly string[], at: Date): Promise<void>;
 }
@@ -127,6 +138,30 @@ export function createD1CoachNudgeStore(env: Env): CoachNudgeStore {
         .bind(programId, cutoff)
         .all<{ step_id: string }>();
       return new Set(results.map((row) => row.step_id));
+    },
+
+    async claimNudges(programId, stepIds, at) {
+      // One atomic statement per step (CRITIC F1): the upsert writes the row
+      // ONLY when the stored nudge is outside the cooldown window — an
+      // in-window row makes the statement a no-op and it reports
+      // meta.changes = 0. Two overlapping loads therefore cannot both claim
+      // the same step, no matter how they interleave around the model call.
+      const claimed = new Set<string>();
+      const cutoff = new Date(at.getTime() - COACH_NUDGE_COOLDOWN_MS).toISOString();
+      const nudgedAt = at.toISOString();
+      for (const stepId of stepIds) {
+        const result = await env.DB.prepare(
+          `INSERT INTO coach_nudge (step_id, program_id, nudged_at) VALUES (?1, ?2, ?3)
+           ON CONFLICT(step_id) DO UPDATE SET
+             nudged_at = excluded.nudged_at,
+             program_id = excluded.program_id
+           WHERE coach_nudge.nudged_at <= ?4`,
+        )
+          .bind(stepId, programId, nudgedAt, cutoff)
+          .run();
+        if (result.meta.changes > 0) claimed.add(stepId);
+      }
+      return claimed;
     },
 
     async recordNudges(programId, stepIds, at) {
@@ -182,11 +217,16 @@ export interface GenerateNudgesOptions {
 }
 
 /** The route's COACH call in one place: find the overdue steps, drop the ones
- * still inside the cooldown, nudge the rest, record what went out.
+ * still inside the cooldown, CLAIM the rest, nudge only what this caller
+ * claimed, and record what went out.
  *
- * Every step that produced a message is recorded — including one that fell
- * back to the template because the LLM call failed. The record is what stops
- * the next dashboard load from paying for the same attempt again. */
+ * Order matters (CRITIC F1): the claim lands before any paid call, so a
+ * second dashboard load overlapping the first cannot read "not yet nudged"
+ * and re-spend — it loses the atomic claim and generates nothing. Every
+ * claimed step that produced a message is re-recorded at completion time —
+ * including one that fell back to the template because the LLM call failed.
+ * The record is what stops the next dashboard load from paying for the same
+ * attempt again. */
 export async function generateNudgesForProgram(
   env: Env,
   programId: string,
@@ -204,9 +244,19 @@ export async function generateNudgesForProgram(
   const now = new Date();
   const recentlyNudged = await store.recentlyNudgedStepIds(programId, now);
   const dueForNudge = steps.filter((step) => !recentlyNudged.has(step.step_id));
+  // Claim before generate. The read above is a pre-filter for reporting and
+  // statement count; the atomic claim is the authoritative gate — a step that
+  // an overlapping load claimed first (or claimed while we were reading) is
+  // simply absent from `claimed`, and we generate nothing for it.
+  const claimed = await store.claimNudges(
+    programId,
+    dueForNudge.map((step) => step.step_id),
+    now,
+  );
 
   const nudges: CoachNudgeItem[] = [];
   for (const step of dueForNudge) {
+    if (!claimed.has(step.step_id)) continue; // another load owns this step's nudge
     const daysOverdue = Math.max(0, Math.floor((now.getTime() - new Date(step.due_date).getTime()) / 86_400_000));
     // One malformed LLM response must not 500 the whole endpoint —
     // per-step isolation, with the deterministic template as the floor.
@@ -220,16 +270,21 @@ export async function generateNudgesForProgram(
   }
 
   if (nudges.length > 0) {
+    // Completion time, not claim time: the message is final now, and the row
+    // being in-window is what suppresses every load until the cooldown ends.
     await store.recordNudges(
       programId,
       nudges.map((nudge) => nudge.stepId),
-      now,
+      new Date(),
     );
   }
 
   return {
     nudges,
     personalized: Boolean(llm),
-    suppressedCount: steps.length - dueForNudge.length,
+    // Counted from what this caller actually delivered, never from what it
+    // merely read: a step that lost its claim to an overlapping load is
+    // suppressed for this load too.
+    suppressedCount: steps.length - nudges.length,
   };
 }

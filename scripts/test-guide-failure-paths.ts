@@ -1543,6 +1543,105 @@ await check("synthesis: the failure-notice episode survives a DO instance swap (
   assert.equal(notices(second.inst), 1, "an eviction must not re-open the episode: the room never sees a duplicate notice (pre-fix: notices=2)");
 });
 
+// ==============================================================================
+// 23) BRICK A1 (CRITIC F2): an eviction WHILE a synthesis pass is in flight.
+//     The stash durability story covers the "cannot start yet" wait, but the
+//     claimed pass consumes its key from durable state before the paid call
+//     and the in-flight marker was in-memory only — an isolate eviction
+//     mid-pass lost the boundary silently (critic probe: revived instance
+//     attempts=0, pending=[], no durable record of the pass). The claim is
+//     durable now, persisted BEFORE the paid call, and a revived instance
+//     re-stashes a stale claim so the alarm path runs it exactly once.
+// ==============================================================================
+await check("synthesis: an eviction mid-pass leaves a durable claim the revived instance recovers", async () => {
+  resetClock();
+  const storage: StoredMap = new Map();
+  const first = makeHarness({ sessionKey: "evict-mid-synthesis", storage });
+  // Held open forever — the instance "dies" inside its paid call. The promise
+  // is never settled (like an evicted isolate's in-flight work).
+  const synthPending = new Promise<string>(() => {});
+  const llm = new ScriptedLlmClient((system, content) => {
+    if (system.includes("EVALUATOR")) return evaluatorVerdictJson(content, "on_track");
+    if (system.includes("SYNTHESIZER")) return synthPending;
+    if (system.includes("PACER")) return JSON.stringify({ message_to_room: "x", rationale: "y" });
+    throw new Error("unexpected " + system.slice(0, 40));
+  });
+  injectLlm(first.inst, llm);
+  const phone = makeSocket("phone", "ev-phone");
+  const screen = makeSocket("screen", "ev-screen");
+  await first.inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "ev-0", content: SUBMISSION_ONE }));
+  await first.inst.webSocketMessage(phone, JSON.stringify({ type: "submit", segmentKey: SEGMENT, clientUuid: "ev-1", content: SUBMISSION_TWO }));
+  await first.ctx.__drain();
+  await first.inst.webSocketMessage(screen, JSON.stringify({ type: "advance_segment" }));
+  await flush();
+  assert.equal(llm.countFor("SYNTHESIZER"), 1, "precondition: the pass is in flight (held open)");
+
+  // The durable claim record (SYNTHESIS_IN_FLIGHT_KEY in session-do.ts).
+  const durableClaim = storage.get("synthesisInFlight") as
+    | { segmentKey: string; fingerprint: string; claimedAtMs: number }
+    | undefined;
+  console.log(
+    `  [measured] in-flight claim: durable synthesisInFlight=${JSON.stringify(durableClaim)}; durable pendingSynthesis=${JSON.stringify(storage.get("pendingSynthesis"))}`,
+  );
+  assert.ok(durableClaim, "the claimed pass must be recorded durably BEFORE the paid call (pre-fix: nothing durable remembers it)");
+  assert.equal(durableClaim.segmentKey, SEGMENT, "the durable claim names the segment the pass covers");
+  assert.equal(
+    durableClaim.fingerprint,
+    JSON.stringify([SUBMISSION_ONE, SUBMISSION_TWO]),
+    "the durable claim carries the material snapshot the pass consumes",
+  );
+  assert.deepEqual(storage.get("pendingSynthesis"), [], "the stash key is consumed at claim time — the claim record is what survives the eviction");
+
+  // Evict mid-pass: a NEW instance over the same durable storage, as an
+  // isolate eviction / deploy restart produces.
+  const later = () =>
+    new ScriptedLlmClient((system, content) => {
+      if (system.includes("SYNTHESIZER")) return validSynthesisJson();
+      if (system.includes("EVALUATOR")) return evaluatorVerdictJson(content, "on_track");
+      if (system.includes("PACER")) return JSON.stringify({ message_to_room: "x", rationale: "y" });
+      throw new Error("unexpected " + system.slice(0, 40));
+    });
+
+  const second = makeHarness({ sessionKey: "evict-mid-synthesis", storage });
+  await second.waitReady();
+  assert.deepEqual(readPending(second.inst), [], "a fresh claim is left in place while it could still be live on the previous isolate");
+  const llm2 = later();
+  injectLlm(second.inst, llm2);
+  await second.inst.alarm();
+  await second.ctx.__drain();
+  assert.equal(llm2.countFor("SYNTHESIZER"), 0, "a claim younger than the stale threshold must not be re-run while it could still be live");
+
+  // The claim ages past the stale threshold (a live pass is bounded by the
+  // LLM client's 20s hard timeout; 10 minutes is deliberately far beyond any
+  // threshold a live pass could hide behind — raising the threshold past
+  // this fails the check).
+  advanceClock(10 * 60_000);
+
+  // Revive once more — the claim is stale now, so init re-stashes it.
+  const third = makeHarness({ sessionKey: "evict-mid-synthesis", storage });
+  await third.waitReady();
+  assert.deepEqual(readPending(third.inst), [SEGMENT], "a stale claim must be re-stashed on init (pre-fix: nothing durable to recover)");
+
+  const llm3 = later();
+  injectLlm(third.inst, llm3);
+  await third.inst.alarm();
+  await third.ctx.__drain();
+
+  const synthMessages = (readState(third.inst).guideLog ?? []).filter((m) => m.kind === "synthesis" && m.segmentKey === SEGMENT);
+  console.log(
+    `  [measured] revived instance: synth attempts=${llm3.countFor("SYNTHESIZER")}; room synthesis messages=${synthMessages.length}; pending=${JSON.stringify(readPending(third.inst))}; durable claim after=${JSON.stringify(storage.get("synthesisInFlight"))}`,
+  );
+  assert.equal(llm3.countFor("SYNTHESIZER"), 1, "the revived instance runs the recovered pass exactly once (pre-fix: attempts=0, the pass was lost)");
+  assert.equal(synthMessages.length, 1, "and the room sees the segment's draft notes");
+  assert.deepEqual(readPending(third.inst), [], "nothing left pending after the recovery drain");
+  assert.equal(storage.get("synthesisInFlight"), undefined, "the durable claim is cleared once the pass completes");
+
+  // A later alarm must not re-run the recovered pass.
+  await third.inst.alarm();
+  await third.ctx.__drain();
+  assert.equal(llm3.countFor("SYNTHESIZER"), 1, "a later alarm must not re-run the recovered pass");
+});
+
 Date.now = REAL_NOW;
 console.log(`\n${passed}/${total} checks passed.`);
 if (process.exitCode) {

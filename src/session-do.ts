@@ -59,6 +59,16 @@ const PENDING_SYNTHESIS_KEY = "pendingSynthesis";
  * the room (the failure-notice episode). Persisted like guide health and the
  * stash so an eviction cannot re-open an episode the room has already seen. */
 const SYNTHESIS_FAILURE_NOTIFIED_KEY = "synthesisFailureNotified";
+/** Durable record of the synthesis pass that is claimed and running. The
+ * stash key is consumed at claim time, so this record is the only durable
+ * evidence a revived instance has that a pass exists (CRITIC F2). Persisted
+ * BEFORE the paid call; cleared when the pass settles. */
+const SYNTHESIS_IN_FLIGHT_KEY = "synthesisInFlight";
+/** A claimed pass older than this is treated as dead — its instance was
+ * evicted mid-call (the LLM client hard-caps one call at 20s, so a genuinely
+ * live pass is never this old). Younger claims are left alone (a previous
+ * isolate might still complete them) and re-checked on the next alarm. */
+const SYNTHESIS_IN_FLIGHT_STALE_MS = 2 * 60_000;
 /** Bound on stashed boundary passes (one per segment boundary; rooms are small). */
 const MAX_PENDING_SYNTHESIS_KEYS = 8;
 
@@ -87,6 +97,18 @@ interface GuideAgentHealth {
 }
 
 type GuideHealthState = Partial<Record<GuideAgentName, GuideAgentHealth>>;
+
+/** Durable claim record for the synthesis pass currently in flight. The
+ * stash key is consumed at claim time, so this record is what tells a
+ * revived instance that a pass for `segmentKey` was claimed and never
+ * settled (CRITIC F2). */
+interface SynthesisInFlightClaim {
+  segmentKey: string;
+  /** The material snapshot the pass covers (submissionTextsFingerprint). */
+  fingerprint: string;
+  /** Epoch ms of the claim — the staleness age is measured from here. */
+  claimedAtMs: number;
+}
 
 /** Real lab rooms use the deterministic "lab-<labSessionId>" key from
  * openLabSession; anything else is an ephemeral test/ad-hoc session that
@@ -167,6 +189,10 @@ export class SessionDO extends DurableObject<Env> {
    * the episode on eviction and re-published a notice the room already saw
    * (CRITIC round 3, item 3). */
   private synthesisFailureNotified = new Set<string>();
+  /** Durable mirror of the in-flight claim (SYNTHESIS_IN_FLIGHT_KEY), loaded
+   * on init: the stash key is consumed at claim time, so this record is what
+   * lets a revived instance recover a pass its predecessor died running. */
+  private synthesisInFlight: SynthesisInFlightClaim | null = null;
   /** Cached LLM client — one per DO instance, not one per guide action. */
   private guideClientInstance: LlmClient | null = null;
   /** The spine plan (only meaningful when SESSION_SPINE=true and this
@@ -191,6 +217,11 @@ export class SessionDO extends DurableObject<Env> {
       this.synthesisFailureNotified = new Set(
         (await ctx.storage.get<string[]>(SYNTHESIS_FAILURE_NOTIFIED_KEY)) ?? [],
       );
+      // A claim left behind by an instance that was evicted mid-pass: re-stash
+      // it here (when already stale) so the alarm path runs the pass. A young
+      // claim is left for the alarm sweep — it could still be live.
+      this.synthesisInFlight = (await ctx.storage.get<SynthesisInFlightClaim>(SYNTHESIS_IN_FLIGHT_KEY)) ?? null;
+      await this.recoverStaleSynthesisInFlight();
     });
   }
 
@@ -547,12 +578,24 @@ export class SessionDO extends DurableObject<Env> {
     // any await — two interleaved triggers (in-flight finally + alarm) can
     // never start two passes for one boundary, and a synthesis that already
     // succeeded can never be re-run from the stash.
-    this.consumePendingSynthesis(segmentKey);
     this.guideWorkInFlight = true;
     this.synthesisInFlightKey = segmentKey;
     // The material snapshot this pass consumes — a later same-segment
     // boundary only counts as covered while the material is byte-identical.
     this.synthesisInFlightFingerprint = submissionTextsFingerprint(submissions);
+    // Durable claim BEFORE the paid call and before the stash key is
+    // consumed: if this instance is evicted mid-pass, the stash alone cannot
+    // tell the next instance a pass exists (the key is gone from it) — the
+    // claim record is what it recovers from (CRITIC F2). Ordering is safe: a
+    // crash between the two writes leaves the claim AND the stash key, and
+    // recovery re-stashes idempotently (stashPendingSynthesis dedupes).
+    this.synthesisInFlight = {
+      segmentKey,
+      fingerprint: this.synthesisInFlightFingerprint,
+      claimedAtMs: Date.now(),
+    };
+    await this.persistSynthesisInFlight();
+    this.consumePendingSynthesis(segmentKey);
     await this.persistPendingSynthesis();
     const work = (async () => {
       const ctx = this.buildGuideContext(segmentKey, submissions);
@@ -621,7 +664,14 @@ export class SessionDO extends DurableObject<Env> {
       .finally(async () => {
         this.synthesisInFlightKey = null;
         this.synthesisInFlightFingerprint = null;
+        // The pass settled — success, provenance hard stop, or a transient
+        // failure that re-stashed it — so the durable claim is cleared (and
+        // the clear persisted: a lingering claim would be treated as a
+        // stranded pass by the next instance). Cleared BEFORE the drain
+        // below, which may claim the next stashed pass.
+        this.synthesisInFlight = null;
         this.guideWorkInFlight = false;
+        await this.persistSynthesisInFlight();
         await this.runPendingSynthesisIfIdle();
       });
     this.ctx.waitUntil(work);
@@ -676,6 +726,44 @@ export class SessionDO extends DurableObject<Env> {
         `${GUIDE_ERROR_LOG_PREFIX} op=failure-notified-persist session=${this.state?.sessionId ?? "unknown"} error=${(err instanceof Error ? `${err.name}: ${err.message}` : String(err)).slice(0, 300)}`,
       );
     }
+  }
+
+  /** Persist (or clear) the durable in-flight claim — same best-effort rule
+   * as the stash: a storage hiccup must not wedge the guide loop, but it is
+   * logged, and the in-memory claim stays authoritative for this instance. */
+  private async persistSynthesisInFlight(): Promise<void> {
+    try {
+      if (this.synthesisInFlight) {
+        await this.ctx.storage.put(SYNTHESIS_IN_FLIGHT_KEY, this.synthesisInFlight);
+      } else {
+        await this.ctx.storage.delete(SYNTHESIS_IN_FLIGHT_KEY);
+      }
+    } catch (err) {
+      console.error(
+        `${GUIDE_ERROR_LOG_PREFIX} op=synthesis-inflight-persist session=${this.state?.sessionId ?? "unknown"} error=${(err instanceof Error ? `${err.name}: ${err.message}` : String(err)).slice(0, 300)}`,
+      );
+    }
+  }
+
+  /** Recover a pass whose instance died mid-call: re-stash the segment so
+   * the alarm path synthesizes it again, then clear the claim. A claim
+   * younger than SYNTHESIS_IN_FLIGHT_STALE_MS is left alone — a previous
+   * isolate could still be running it — and is re-checked on the next alarm.
+   * Never touches a claim this instance is itself running, and re-stashing
+   * is idempotent with an already-present stash key (the crash-between-writes
+   * window of the claim ordering above). */
+  private async recoverStaleSynthesisInFlight(): Promise<void> {
+    const claim = this.synthesisInFlight;
+    if (!claim) return;
+    if (this.synthesisInFlightKey !== null) return; // this instance is mid-pass
+    const ageMs = Date.now() - claim.claimedAtMs;
+    if (ageMs <= SYNTHESIS_IN_FLIGHT_STALE_MS) return; // possibly still live
+    console.error(
+      `${GUIDE_ERROR_LOG_PREFIX} op=synthesis-inflight-recover key=${claim.segmentKey} ageMs=${ageMs} session=${this.state?.sessionId ?? "unknown"}`,
+    );
+    await this.stashPendingSynthesis(claim.segmentKey);
+    this.synthesisInFlight = null;
+    await this.persistSynthesisInFlight();
   }
 
   /** Run a stashed boundary pass once the shared mutex is free — called from
@@ -977,6 +1065,10 @@ export class SessionDO extends DurableObject<Env> {
     await this.ready;
     await this.checkpointToD1();
     await this.runPacerIfDue();
+    // A pass claimed by a previous instance that then died (eviction/deploy
+    // mid-call) is re-stashed here once its claim is stale — the drain below
+    // then runs it. Without this, the stash says "nothing pending" forever.
+    await this.recoverStaleSynthesisInFlight();
     // A boundary pass stashed while the guide mutex was busy runs here when
     // the in-flight work's finally() has not already picked it up.
     await this.runPendingSynthesisIfIdle();
