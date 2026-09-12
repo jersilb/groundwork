@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { SegmentSpec } from "./segment-schema.ts";
 import type { LlmClient } from "./llm-client.ts";
 import { MODELS } from "./models.ts";
+import { applyPromptBudget, renderPromptSubmissions, stripPromptTruncationMarker } from "../session-protocol.ts";
 
 // SYNTHESIZER — build plan §5.3. Runs at segment boundaries and end of
 // session. Uses Opus, not Sonnet — this output goes in front of a board.
@@ -62,16 +63,25 @@ const SYNTHESIZER_SYSTEM_PROMPT = [
   'Respond with strict JSON only, no prose: {"artifacts": [{"kind": "purpose"|"vision"|"value"|"strategy"|"assumption"|"risk"|"driver", "content": string, "provenance": [{"type": "submission"|"transcript", "index": number, "quote": string}]}]}.',
 ].join("\n");
 
-function buildUserContent(input: SynthesizerInput): string {
-  return [
-    `Segment objective: ${input.segment.objective}`,
-    `This segment's curriculum-specific output concept (context only, NOT a valid "kind" value): ${input.segment.produces.map((p) => p.artifact).join(", ")}`,
-    `Submissions (index: text):`,
-    input.submissions.map((s, i) => `[${i}] ${s}`).join("\n") || "(none)",
-    input.transcriptWindow ? `Transcript window (index 0):\n[0] ${input.transcriptWindow}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+export function buildUserContent(input: SynthesizerInput): string {
+  return applyPromptBudget({
+    submissions: input.submissions,
+    transcript: input.transcriptWindow,
+    render: ({ submissions, transcript, submissionsElided }) => {
+      const heading =
+        submissionsElided > 0
+          ? `Submissions (index: text; newest ${submissions.length} of ${submissions.length + submissionsElided} shown, original indices preserved):`
+          : "Submissions (index: text):";
+      return [
+        `Segment objective: ${input.segment.objective}`,
+        `This segment's curriculum-specific output concept (context only, NOT a valid "kind" value): ${input.segment.produces.map((p) => p.artifact).join(", ")}`,
+        renderPromptSubmissions(heading, submissions, submissionsElided, (entry) => `[${entry.index}] ${entry.text}`),
+        transcript ? `Transcript window (index 0):\n[0] ${transcript}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+    },
+  }).content;
 }
 
 export async function runSynthesizer(input: SynthesizerInput, llm: LlmClient): Promise<SynthesizerOutput> {
@@ -106,9 +116,17 @@ export function parseSynthesizerResponse(text: string): SynthesizerOutput {
 /** Returns a list of human-readable issues; empty means every provenance
  * quote genuinely appears in its claimed source. This is the check that
  * makes provenance a real feature instead of a field the model can fill
- * with anything plausible-sounding. */
+ * with anything plausible-sounding.
+ *
+ * The transcript source is verified marker-free: the prompt-budget layer's
+ * truncation marker is system boilerplate and must never satisfy a citation
+ * (guide-hardening wave 1.1 — the reviewer verified an artifact quoting
+ * nothing but the marker). Stripping rather than rejecting marker wording
+ * keeps genuine quotes valid and makes the alarm path's capped window and
+ * the manual route's raw window verify identically. */
 export function verifyProvenance(output: SynthesizerOutput, input: SynthesizerInput): string[] {
   const issues: string[] = [];
+  const transcriptSource = input.transcriptWindow ? stripPromptTruncationMarker(input.transcriptWindow) : undefined;
   for (const artifact of output.artifacts) {
     for (const ref of artifact.provenance) {
       if (ref.type === "submission") {
@@ -119,7 +137,7 @@ export function verifyProvenance(output: SynthesizerOutput, input: SynthesizerIn
           issues.push(`artifact "${artifact.kind}": quote "${ref.quote}" not found verbatim in submission[${ref.index}]`);
         }
       } else {
-        if (!input.transcriptWindow || !input.transcriptWindow.includes(ref.quote)) {
+        if (!transcriptSource || !transcriptSource.includes(ref.quote)) {
           issues.push(`artifact "${artifact.kind}": quote "${ref.quote}" not found verbatim in the transcript window`);
         }
       }

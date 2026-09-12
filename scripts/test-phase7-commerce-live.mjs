@@ -97,7 +97,8 @@ async function main() {
     console.log(`      ${checkoutJson.checkoutUrl}\n`);
 
     console.log("3. Create a real Stripe customer directly (proves the key can write, not just read)...");
-    const stripe = new Stripe(secretKey, { apiVersion: "2026-06-24.dahlia" });
+    // Same SDK pin as src/commerce/stripe-client.ts — one api version story.
+    const stripe = new Stripe(secretKey, { apiVersion: "2026-07-29.dahlia" });
     const customer = await stripe.customers.create({ name: "Phase 7 Live Test Org", metadata: { org_id: orgId } });
     console.log(`PASS: real Stripe customer created — ${customer.id}\n`);
 

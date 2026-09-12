@@ -1,3 +1,14 @@
+# CI — Groundwork. Release-readiness revision (2026-09-12):
+#  * build dist/ before every job that boots the local dev server — the Worker
+#    serves [assets] from dist/ and refuses to start without it (all five
+#    "wrangler dev did not become healthy" failures, CI run 34520003105);
+#  * suite wiring: test:prompt-budgets / test:guide-failure-paths /
+#    test:llm-timeout (phase 2), test:coach-throttle (phase 6);
+#  * npm ci instead of npm install, so lockfile drift fails loudly instead of
+#    silently installing a dependency set nobody tested;
+#  * phase-5 live test gated by a job-level env var — a step's own env is not
+#    visible to its own `if`, and secrets cannot be used in `if` at all.
+
 name: CI
 
 on:
@@ -27,7 +38,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+      # [release-readiness fix] npm ci (not install): a stale lockfile must fail
+      # loudly — `npm install` silently installed the package.json pins while
+      # the repo had been developed and tested against the locked versions.
+      - run: npm ci
       - name: Typecheck (worker + web)
         run: npm run typecheck
       - name: Build the frontend PWA
@@ -45,9 +59,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+      - run: npm ci
       - name: Apply D1 migrations locally
         run: npx wrangler d1 migrations apply groundwork --local
+      # [release-readiness fix] the dev server serves [assets] from dist/ and
+      # refuses to start without it.
+      - name: Build the frontend (the local dev server serves dist/)
+        run: npm run build:web
       - name: Run the automated multi-client convergence test
         run: node scripts/test-phase1-multiclient.mjs
 
@@ -59,9 +77,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+      - run: npm ci
       - name: Apply D1 migrations locally
         run: npx wrangler d1 migrations apply groundwork --local
+      # [release-readiness fix] build before anything that boots the dev server.
+      - name: Build the frontend (the local dev server serves dist/)
+        run: npm run build:web
       - name: Run the reconnect/replay + leader + lab-wiring test
         run: node scripts/test-session-integration.mjs
       - name: Session-spine integration smoke (SESSION_SPINE=true, full protocol walk)
@@ -75,7 +96,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+      - run: npm ci
       - name: Compile segment specs (proves the loader/compiler works)
         run: npm run specs:compile
       - name: PACER deterministic logic tests
@@ -92,6 +113,13 @@ jobs:
         run: npm run test:six-hour-simulation
       - name: EVALUATOR/PROBER parsing and validation tests
         run: npm run test:evaluator-prober-parsing
+      # [release-readiness fix] hardening suites added on this branch:
+      - name: Prompt-budget tests (transcript windows, truncation honesty, determinism)
+        run: npm run test:prompt-budgets
+      - name: Guide failure-path tests (telemetry, backoff, episode durability, failure notices)
+        run: npm run test:guide-failure-paths
+      - name: LLM timeout tests (deadline arithmetic, timer cleanup)
+        run: npm run test:llm-timeout
       - name: Eval harness (self-test mode — no ANTHROPIC_API_KEY in CI yet)
         run: npm run test:eval-harness
 
@@ -103,9 +131,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+      - run: npm ci
       - name: Install Playwright's Chromium (CI runner, not the dev sandbox)
         run: npx playwright install --with-deps chromium
+      # [release-readiness fix] this gate boots the local dev server too, so it
+      # needs the same migration + build preamble as every other server gate.
+      - name: Apply D1 migrations locally
+        run: npx wrangler d1 migrations apply groundwork --local
+      - name: Build the frontend (the local dev server serves dist/)
+        run: npm run build:web
       - name: Run the real-browser network-cutoff/reconnect test
         run: node scripts/test-phase3-resilience.mjs
 
@@ -117,29 +151,41 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+      - run: npm ci
       - name: Apply D1 migrations locally
         run: npx wrangler d1 migrations apply groundwork --local
+      # [release-readiness fix] build before booting the dev server.
+      - name: Build the frontend (the local dev server serves dist/)
+        run: npm run build:web
       - name: Run the audio pipeline test (Workers AI runs remote-only; not exercised here)
         run: node scripts/test-phase4-audio.mjs
 
   phase5-synthesis:
     name: Phase 5 gate — SYNTHESIZER provenance verification, artifact versioning
     runs-on: ubuntu-latest
+    # [release-readiness fix] secrets cannot be referenced in `if:` and a step's
+    # own env is not visible to its own `if` — map the secret at job level and
+    # test the env var instead (GitHub's documented pattern). While no
+    # ANTHROPIC_API_KEY repo secret exists (declined 2026-07-31), the live test
+    # self-skips and the deterministic provenance gate below still runs.
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+      - run: npm ci
       - name: Apply D1 migrations locally
         run: npx wrangler d1 migrations apply groundwork --local
+      # [release-readiness fix] the live test below boots the dev server, so it
+      # carries the same dist/ build preamble as every other server gate.
+      - name: Build the frontend (the local dev server serves dist/)
+        run: npm run build:web
       - name: Provenance verification tests (deterministic, no API key needed)
         run: npm run test:synthesizer-provenance
       - name: Real end-to-end synthesis test (only if ANTHROPIC_API_KEY is configured as a repo secret)
         if: env.ANTHROPIC_API_KEY != ''
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: npm run test:phase5
 
   phase6-program-layer:
@@ -150,11 +196,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+      - run: npm ci
       - name: Apply D1 migrations locally
         run: npx wrangler d1 migrations apply groundwork --local
+      # [release-readiness fix] build before booting the dev server.
+      - name: Build the frontend (the local dev server serves dist/)
+        run: npm run build:web
       - name: Run the full simulated-org gate test (COACH falls back to templates without a key — still satisfies the gate)
         run: npm run test:phase6
+      # [release-readiness fix] hardening suite for the D1-backed COACH throttle.
+      - name: COACH nudge throttle tests (persisted throttle, 503 on missing table)
+        run: npm run test:coach-throttle
 
   phase7-commerce-pwa:
     name: Phase 7 gate — Stripe webhook verification, PWA installability
@@ -164,7 +216,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+      - run: npm ci
       - name: Install Playwright's Chromium (CI runner, not the dev sandbox)
         run: npx playwright install --with-deps chromium
       - name: Stripe webhook signature verification (pure crypto, no network/key needed)

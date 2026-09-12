@@ -57,7 +57,27 @@ export function scanContent(content, terms) {
 }
 
 function listTrackedFiles() {
-  const out = execFileSync("git", ["ls-files"], { cwd: REPO_ROOT, encoding: "utf8" });
+  let out;
+  try {
+    // stdio: capture stderr (don't echo it) so the failure path below owns
+    // the whole message; a raw `fatal: not a git repository` line plus a
+    // stack trace is what F5 flagged.
+    out = execFileSync("git", ["ls-files"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (err) {
+    // No .git (tarball, CI artifact, copied tree) or no git binary: the
+    // file set this lint is defined to scan cannot be enumerated. Fail
+    // loudly and legibly — never as a raw stack trace — and stay non-zero.
+    const cause = String(err.stderr || err.message || err).trim().split("\n")[0];
+    console.error("Vocabulary lint: CANNOT RUN — `git ls-files` failed, so tracked files cannot be enumerated.");
+    console.error(`  Repo root: ${REPO_ROOT}`);
+    console.error(`  Cause: ${cause}`);
+    console.error("  This lint must run inside a git checkout (it scans tracked, non-exempt files).");
+    process.exit(2);
+  }
   return out.split("\n").filter(Boolean);
 }
 

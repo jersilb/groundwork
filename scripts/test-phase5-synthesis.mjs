@@ -91,13 +91,15 @@ async function main() {
     console.log("Round 1: synthesizing from 3 submissions against real claude-opus-5...");
     const res1 = await fetch(`${BASE}/session/${SESSION_KEY}/synthesize`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { ...DEV_AUTH_HEADERS, "content-type": "application/json" },
       body: JSON.stringify({ segment: SEGMENT, submissions: SUBMISSIONS_ROUND_1 }),
     });
-    const json1 = await res1.json();
     if (!res1.ok) {
-      throw new Error(`FAIL: synthesize round 1 returned ${res1.status}: ${JSON.stringify(json1)}`);
+      // Auth gate (src/index.ts) rejects non-GET requests without the dev
+      // bypass headers — read the body as text so a 401/422 reports cleanly.
+      throw new Error(`FAIL: synthesize round 1 returned ${res1.status}: ${(await res1.text()).slice(0, 300)}`);
     }
+    const json1 = await res1.json();
     if (json1.artifacts.length === 0) {
       throw new Error("FAIL: round 1 produced zero artifacts");
     }
@@ -106,7 +108,12 @@ async function main() {
       console.log(`  [${a.kind}] ${a.content}`);
     }
 
-    const res1Plan = await fetch(`${BASE}/session/${SESSION_KEY}/plan`);
+    const res1Plan = await fetch(`${BASE}/session/${SESSION_KEY}/plan`, {
+      headers: { ...DEV_AUTH_HEADERS },
+    });
+    if (!res1Plan.ok) {
+      throw new Error(`FAIL: GET plan returned ${res1Plan.status}: ${(await res1Plan.text()).slice(0, 300)}`);
+    }
     const plan1 = await res1Plan.json();
     const totalItems = plan1.plan.sections.reduce((n, s) => n + s.items.length, 0);
     if (totalItems !== json1.artifacts.length) {
@@ -119,13 +126,13 @@ async function main() {
     console.log("\nRound 2: re-synthesizing with an additional submission (should supersede, not duplicate)...");
     const res2 = await fetch(`${BASE}/session/${SESSION_KEY}/synthesize`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { ...DEV_AUTH_HEADERS, "content-type": "application/json" },
       body: JSON.stringify({ segment: SEGMENT, submissions: SUBMISSIONS_ROUND_2 }),
     });
-    const json2 = await res2.json();
     if (!res2.ok) {
-      throw new Error(`FAIL: synthesize round 2 returned ${res2.status}: ${JSON.stringify(json2)}`);
+      throw new Error(`FAIL: synthesize round 2 returned ${res2.status}: ${(await res2.text()).slice(0, 300)}`);
     }
+    const json2 = await res2.json();
     console.log(`PASS: round 2 produced ${json2.artifacts.length} artifact(s).`);
 
     exitCode = 0;

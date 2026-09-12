@@ -187,13 +187,26 @@ export function appendGuideMessage(log: GuideMessage[] | undefined, message: Gui
  * the one LLM escalation — "what exactly should we cut?" — fires only on
  * a compress decision. Returns null when there is nothing new to say
  * (PACER should not nag: same action as last tick => silence).
+ *
+ * `escalationError` is set when the compress escalation failed: the
+ * deterministic fallback text still composes into `message` (the room must
+ * not lose its pacing guidance), but the caller is told the failure so it
+ * can record it — the pre-wave version swallowed the error and the DO
+ * booked the degraded tick as a SUCCESS, so the pacer's skip gate could
+ * never trip and lastSuccessAt lied.
  */
+export interface PacerTickResult {
+  message: GuideMessage | null;
+  action: string;
+  escalationError?: unknown;
+}
+
 export async function runPacerTick(
   ctx: GuideContext,
   spec: SegmentSpec,
   llm: LlmClient | null,
   lastAction?: string,
-): Promise<{ message: GuideMessage | null; action: string }> {
+): Promise<PacerTickResult> {
   const input: PacerInput = {
     segment: spec,
     elapsedSegmentMin: ctx.elapsedSegmentMin,
@@ -215,12 +228,15 @@ export async function runPacerTick(
   }
 
   let text = decision.message_to_room ?? decision.rationale;
+  let escalationError: unknown;
   if (decision.action === "compress" && llm) {
     try {
       const escalated = await escalateCompressDecision(input, llm);
       text = escalated.message_to_room;
-    } catch {
-      // Malformed/failed escalation — decidePacerAction's rationale stands.
+    } catch (err) {
+      // Malformed/failed escalation — decidePacerAction's rationale stands
+      // for the room, but the failure must not vanish: hand it to the caller.
+      escalationError = err;
     }
   }
 
@@ -233,18 +249,30 @@ export async function runPacerTick(
   return {
     message,
     action: decision.action,
+    escalationError,
   };
 }
 
 export interface EvaluateResult {
   message: GuideMessage | null;
   output: EvaluatorOutput | null;
+  /** Set when PROBER's follow-up failed AFTER a paid EVALUATOR verdict.
+   * The fallback message (built from the evaluator's own output, no new
+   * LLM spend) is published; the caller logs this degradation without
+   * counting the evaluator itself as failed — its verdict was valid. */
+  proberError?: unknown;
 }
 
 /**
  * EVALUATOR on the room's current input; PROBER follow-up when the input
  * runs thin/off-track/stuck. Deterministic guardrails live in the DO (new
  * submissions + interval), the quality bar lives in the prompts.
+ *
+ * A PROBER failure must not discard the evaluator verdict the room already
+ * paid for (pre-wave it threw, and the DO's catch published ZERO guide
+ * messages): the follow-up falls back to a deterministic probe composed
+ * from the evaluator's own output — same shape as the conflict/stuck
+ * branches — and the error rides out on `proberError` for telemetry.
  */
 export async function evaluateAndMaybeProbe(ctx: GuideContext, spec: SegmentSpec, llm: LlmClient): Promise<EvaluateResult> {
   const output = await runEvaluator(
@@ -255,6 +283,7 @@ export async function evaluateAndMaybeProbe(ctx: GuideContext, spec: SegmentSpec
   if (output.verdict === "on_track") return { message: null, output };
 
   let message: GuideMessage | null = null;
+  let proberError: unknown;
   if (output.verdict === "conflict") {
     // Conflict detection surfaces to the LEADER, worded so it de-escalates
     // rather than adjudicates (build plan §5.3; doctrinal neutrality).
@@ -276,14 +305,34 @@ export async function evaluateAndMaybeProbe(ctx: GuideContext, spec: SegmentSpec
     );
   } else {
     // thin | off_track — this is PROBER's whole job: a specific follow-up.
-    const probe = await runProber(
-      { segment: spec, evaluatorOutput: output, submissions: ctx.submissions },
-      llm,
-    );
-    message = makeGuideMessage("probe", probe.probe, ctx.segment.key, output.verdict);
+    // The room-visible detail on the SUCCESS path is the verdict (pre-wave
+    // behavior — wave 1.1 had smuggled evidence in here on both paths).
+    let text: string;
+    let detail: string;
+    try {
+      const probe = await runProber(
+        { segment: spec, evaluatorOutput: output, submissions: ctx.submissions },
+        llm,
+      );
+      text = probe.probe;
+      detail = output.verdict;
+    } catch (err) {
+      // The paid EVALUATOR verdict survives; publish a deterministic probe
+      // from the evaluator's own output instead (no new LLM spend). This
+      // fallback is new behavior by design, and its detail carries the
+      // evaluator's evidence — the diagnostic that explains the probe.
+      proberError = err;
+      detail = output.evidence;
+      const area = output.weakest_criterion ? ` (weakest area: ${output.weakest_criterion})` : "";
+      text =
+        output.verdict === "off_track"
+          ? `The room's input has drifted from this segment's question${area}. Consider restating the question and asking for one concrete answer.`
+          : `The room's input is still general${area}. Consider asking for one specific example — a name, a date, or a number.`;
+    }
+    message = makeGuideMessage("probe", text, ctx.segment.key, detail);
   }
 
-  return { message, output };
+  return { message, output, proberError };
 }
 
 export interface SynthesisResult {
