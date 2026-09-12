@@ -13,6 +13,7 @@
 import { spawn } from "node:child_process";
 import net from "node:net";
 import path from "node:path";
+import { wsJsonFrame, printInfraFlakeSummary, isTransportText } from "./lib/infra-flake-shield.mjs";
 
 const PORT = 8794;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -81,7 +82,10 @@ function connectScreen(sessionKey) {
     const ws = new WebSocket(`${WS_BASE}/session/${sessionKey}/connect?role=screen&clientId=spine-smoke-screen`);
     const client = { ws, states: [], errors: [] };
     ws.addEventListener("message", (ev) => {
-      const msg = JSON.parse(ev.data);
+      // [INFRA-FLAKE-SHIELD v2] WS frames parse through the shield (transport
+      // frames counted + dropped; other non-JSON throws — never silent).
+      const msg = wsJsonFrame(ev.data, "ws:spine-screen");
+      if (!msg) return;
       if (msg.type === "state") client.states.push(msg.state);
       if (msg.type === "error") client.errors.push(msg.message);
     });
@@ -200,7 +204,8 @@ async function main() {
       const ws = new WebSocket(`${WS_BASE}/session/${SESSION_KEY}/connect?role=phone&clientId=spine-smoke-phone`);
       const phoneClient = { ws, errors: [] };
       ws.addEventListener("message", (ev) => {
-        const msg = JSON.parse(ev.data);
+        const msg = wsJsonFrame(ev.data, "ws:spine-phone");
+        if (!msg) return;
         if (msg.type === "error") phoneClient.errors.push(msg.message);
       });
       ws.addEventListener("open", () => resolve(phoneClient));
@@ -246,9 +251,10 @@ async function main() {
   } catch (err) {
     console.error("SMOKE ERROR:", err instanceof Error ? err.message : err);
     console.error(logLines.slice(-25).join(""));
-    process.exitCode = 1;
+    process.exitCode = isTransportText(err?.message ?? "") ? 3 : 1;
   } finally {
     if (wrangler) killWrangler(wrangler);
+    printInfraFlakeSummary();
   }
 }
 

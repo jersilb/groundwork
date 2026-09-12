@@ -21,7 +21,14 @@ import { spawn, execFileSync } from "node:child_process";
 import { readdirSync, rmSync, mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import { fetchWithShield, printInfraFlakeSummary, isTransportClassFailure } from "./lib/infra-flake-shield.mjs";
+import {
+  fetchJsonWithShield,
+  printInfraFlakeSummary,
+  isTransportError,
+  d1Rows,
+  cliEnv,
+  wsJsonFrame,
+} from "./lib/infra-flake-shield.mjs";
 
 // [HOLMES-INSTRUMENTATION] Tee wrangler dev stdout/stderr to a file so a
 // mid-test 500 leaves its server-side log behind. The rolling in-memory
@@ -117,7 +124,12 @@ function connectClient(role, clientId, sessionKey, screenToken) {
     const ws = new WebSocket(url);
     const states = [];
     ws.addEventListener("message", (ev) => {
-      const msg = JSON.parse(ev.data);
+      // [INFRA-FLAKE-SHIELD v2] every WS frame parses through the shield:
+      // a transport-class non-JSON frame is counted + loudly dropped (the
+      // room re-syncs on reconnect; the section-level retry applies); any
+      // other non-JSON frame throws — never silently ignored.
+      const msg = wsJsonFrame(ev.data, `ws:${clientId}`);
+      if (!msg) return;
       if (msg.type === "state") states.push(msg.state);
       if (msg.type === "error") console.error(`[${clientId}] server error: ${msg.message}`);
     });
@@ -152,10 +164,10 @@ async function waitForCondition(fn, timeoutMs, label) {
 let resumeHook = null;
 
 async function postJson(p, body, resumed = false) {
-  // [INFRA-FLAKE-SHIELD] the dev server can drop the proxy↔runtime
-  // connection mid-request (upstream wrangler bug); a transport-class
-  // failure gets ONE loud retry here, never in app code.
-  const attempt = await fetchWithShield(
+  // [INFRA-FLAKE-SHIELD v2] text-first fetch helper: read the body as TEXT;
+  // a transport-class failure (bad body OR the fetch itself dying) gets ONE
+  // loud retry, never in app code; the body is only parsed when it is JSON.
+  const attempt = await fetchJsonWithShield(
     () => fetch(`${BASE}${p}`, {
       method: "POST",
       headers: { ...DEV_AUTH_HEADERS, "content-type": "application/json" },
@@ -167,36 +179,30 @@ async function postJson(p, body, resumed = false) {
     if (!resumed && resumeHook && (await resumeHook())) return postJson(p, body, true);
     throw attempt.err;
   }
-  const { res, text } = attempt;
-  if (!resumed && isTransportClassFailure({ status: res.status, body: text }) && resumeHook) {
+  if (!resumed && attempt.transport && resumeHook) {
     if (await resumeHook()) return postJson(p, body, true);
   }
   // [HOLMES-INSTRUMENTATION] keep the RAW body, not just a parsed JSON —
   // an unhandled dev-server 500 is not JSON, and postJson's old
   // `.json().catch(() => ({}))` threw that evidence away.
-  let json = {};
-  try { json = JSON.parse(text); } catch { /* non-JSON body (dev 500) */ }
-  return { res, json, text };
+  return { res: attempt.res, json: attempt.json ?? {}, text: attempt.text };
 }
 
 /** Run a query against the test's isolated local D1 (wrangler must be
- * stopped — d1 execute and dev cannot safely share the same sqlite). */
+ * stopped — d1 execute and dev cannot safely share the same sqlite).
+ * [INFRA-FLAKE-SHIELD v2] text-first extraction: stdout may be polluted by
+ * wrangler's own log/telemetry lines (the 🪵 log line; the trailing
+ * `Metrics dispatcher: ... "argsUsed":[...]` line whose `]` broke the old
+ * indexOf/lastIndexOf slicing — CI 34672204710, parse error at position
+ * 191, line 15). `cliEnv()` keeps the job-level WRANGLER_LOG=debug out of
+ * this one-shot call; d1Rows throws loudly if extraction still fails. */
 function d1Query(sql) {
   const out = execFileSync(
     "npx",
     ["wrangler", "d1", "execute", "groundwork", "--local", "--persist-to", PERSIST_DIR, "--json", "--command", sql],
-    { cwd: REPO_ROOT, encoding: "utf8" },
+    { cwd: REPO_ROOT, encoding: "utf8", env: cliEnv() },
   );
-  try {
-    const parsed = JSON.parse(out);
-    return Array.isArray(parsed) ? (parsed[0]?.results ?? []) : [];
-  } catch {
-    const start = out.indexOf("[");
-    const end = out.lastIndexOf("]");
-    if (start === -1 || end <= start) return [];
-    const parsed = JSON.parse(out.slice(start, end + 1));
-    return parsed[0]?.results ?? [];
-  }
+  return d1Rows(out, `d1 execute: ${sql.slice(0, 80)}`);
 }
 
 function doDirFiles() {
@@ -507,7 +513,17 @@ async function main() {
         `TEST FAILED: ${err.message ?? err}\n\n--- wrangler log tail ---\n${tail}\n`,
       );
     } catch { /* best effort */ }
-    exitCode = 1;
+    // [INFRA-FLAKE-SHIELD v2] exit-3 discipline: a transport-class failure
+    // that survived the shield retry + restart is NOT an app regression —
+    // distinct loud exit code so CI can tell them apart (exit 1 = app).
+    if (isTransportError(err)) {
+      console.error(
+        "[INFRA-FLAKE] final failure is transport-class (upstream wrangler dev defect — workers-sdk #15203/#15452; fix PR #15252 released in wrangler 4.129.1). Exit 3 — not an app regression.",
+      );
+      exitCode = 3;
+    } else {
+      exitCode = 1;
+    }
   } finally {
     if (wrangler) killWrangler(wrangler);
     rmSync(PERSIST_DIR, { recursive: true, force: true });

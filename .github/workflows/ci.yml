@@ -84,6 +84,8 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      - name: Infra-flake shield self-test (classification fixtures, no server)
+        run: node scripts/test-infra-flake-shield.mjs
       - name: Apply D1 migrations locally
         run: npx wrangler d1 migrations apply groundwork --local
       # [release-readiness fix] build before anything that boots the dev server.
@@ -100,7 +102,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wrangler-logs-session-integration
-          path: ~/.wrangler/logs
+          # [HOLMES v2] wrangler writes its log dir to ~/.wrangler/logs on some
+          # setups and ~/.config/.wrangler/logs on Linux CI runners (XDG) — the
+          # v1 path only matched the former, so uploads were empty.
+          path: |
+            ~/.wrangler/logs
+            ~/.config/.wrangler/logs
           if-no-files-found: ignore
           retention-days: 7
 
@@ -184,7 +191,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wrangler-logs-phase4
-          path: ~/.wrangler/logs
+          # [HOLMES v2] both possible wrangler log dirs (see session job note).
+          path: |
+            ~/.wrangler/logs
+            ~/.config/.wrangler/logs
           if-no-files-found: ignore
           retention-days: 7
 
@@ -244,7 +254,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wrangler-logs-phase6
-          path: ~/.wrangler/logs
+          # [HOLMES v2] both possible wrangler log dirs (see session job note).
+          path: |
+            ~/.wrangler/logs
+            ~/.config/.wrangler/logs
           if-no-files-found: ignore
           retention-days: 7
 

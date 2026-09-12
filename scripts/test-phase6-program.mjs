@@ -6,8 +6,13 @@
 // reach — it's genuinely fully verifiable here.
 import { spawn } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
+import net from "node:net";
 import path from "node:path";
-import { fetchWithShield, printInfraFlakeSummary } from "./lib/infra-flake-shield.mjs";
+import {
+  fetchJsonWithShield,
+  printInfraFlakeSummary,
+  isTransportError,
+} from "./lib/infra-flake-shield.mjs";
 
 const PORT = 8794;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -40,11 +45,43 @@ async function waitForServer(timeoutMs) {
   return false;
 }
 
-async function postJson(path_, body) {
-  // [INFRA-FLAKE-SHIELD] ONE loud retry on the exact upstream dev-server
-  // transport signature (wrangler ProxyWorker connection drop) — see
-  // scripts/lib/infra-flake-shield.mjs. Never retries app errors.
-  const attempt = await fetchWithShield(
+// [INFRA-FLAKE-SHIELD v2] restart-resume hook: if the upstream defect kills
+// the dev server mid-request, bring it back (same default state dir — CI
+// applies the D1 migrations there before this suite, so state survives) and
+// retry the one request that died. Transport-class only; app failures are
+// never masked.
+let wrangler = null;
+let restarts = 0;
+let resumeHook = null;
+
+function killWranglerProc() {
+  if (!wrangler) return;
+  try { process.kill(-wrangler.pid, "SIGKILL"); }
+  catch { try { wrangler.kill("SIGKILL"); } catch { /* already dead */ } }
+}
+
+function portIsFree(port) {
+  return new Promise((resolve) => {
+    const sock = net.connect({ port, host: "127.0.0.1" });
+    sock.once("connect", () => { sock.destroy(); resolve(false); });
+    sock.once("error", () => resolve(true));
+  });
+}
+
+async function waitForPortFree(port, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await portIsFree(port)) return true;
+    await sleep(300);
+  }
+  return false;
+}
+
+async function postJson(path_, body, resumed = false) {
+  // [INFRA-FLAKE-SHIELD v2] text-first: body read as TEXT; transport-class
+  // failures (bad body OR the fetch itself dying) get ONE loud retry — and a
+  // restart-resume when the server is gone; the body parses only when JSON.
+  const attempt = await fetchJsonWithShield(
     () => fetch(`${BASE}${path_}`, {
       method: "POST",
       headers: { ...DEV_AUTH_HEADERS, "content-type": "application/json" },
@@ -52,22 +89,46 @@ async function postJson(path_, body) {
     }),
     `POST ${path_}`,
   );
-  if (attempt.err) throw attempt.err;
-  const { res, text } = attempt;
-  let json = {};
-  try { json = JSON.parse(text); } catch { /* non-JSON body (dev 500 page) */ }
-  return { res, json, text };
+  if (attempt.err) {
+    if (!resumed && resumeHook && (await resumeHook())) return postJson(path_, body, true);
+    throw attempt.err;
+  }
+  if (!resumed && attempt.transport && resumeHook) {
+    if (await resumeHook()) return postJson(path_, body, true);
+  }
+  return { res: attempt.res, json: attempt.json ?? {}, text: attempt.text, parsed: attempt.parsed, transport: attempt.transport };
 }
 
-async function main() {
-  console.log(`Starting wrangler dev on port ${PORT}...`);
-  const wrangler = spawn("npx", ["wrangler", "dev", "--port", String(PORT), "--local"], {
+/** Shielded GET + JSON. The old code called `fetch(...).then(r => r.json())`
+ * raw on the /program and /overdue-steps reads — the unshielded parse site
+ * that crashed CI run 34672204710 ("Unexpected token 'E', \"Error: Net\"…"). */
+async function getJson(url, label, resumed = false) {
+  const attempt = await fetchJsonWithShield(() => fetch(url, { headers: DEV_AUTH_HEADERS }), label);
+  if (attempt.err) {
+    if (!resumed && resumeHook && (await resumeHook())) return getJson(url, label, true);
+    throw attempt.err;
+  }
+  if (!resumed && attempt.transport && resumeHook) {
+    if (await resumeHook()) return getJson(url, label, true);
+  }
+  return attempt;
+}
+
+function spawnWrangler() {
+  const wr = spawn("npx", ["wrangler", "dev", "--port", String(PORT), "--local"], {
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   });
   // [HOLMES-INSTRUMENTATION] tee to disk instead of silently draining.
-  wrangler.stdout.on("data", (d) => { try { appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${String(d)}`); } catch { /* ignore */ } });
-  wrangler.stderr.on("data", (d) => { try { appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${String(d)}`); } catch { /* ignore */ } });
+  const tee = (d) => { try { appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${String(d)}`); } catch { /* ignore */ } };
+  wr.stdout.on("data", tee);
+  wr.stderr.on("data", tee);
+  return wr;
+}
+
+async function main() {
+  console.log(`Starting wrangler dev on port ${PORT}...`);
+  wrangler = spawnWrangler();
 
   let exitCode = 1;
 
@@ -75,6 +136,20 @@ async function main() {
     const up = await waitForServer(30_000);
     if (!up) throw new Error("wrangler dev did not become healthy in time");
     console.log("Server up.\n");
+
+    // [INFRA-FLAKE v2] restart-resume: same default state dir (CI migrated
+    // it before this suite), so D1 state survives; only fires when a request
+    // died exactly as the server went down — app failures are never masked.
+    resumeHook = async () => {
+      try { if ((await fetch(`${BASE}/health`)).ok) return false; } catch { /* down */ }
+      restarts += 1;
+      console.error(`[INFRA-FLAKE] dev server down — RESTART #${restarts} (upstream wrangler transport defect, workers-sdk #15203/#15452; not an app failure)`);
+      killWranglerProc();
+      await waitForPortFree(PORT, 10_000);
+      wrangler = spawnWrangler();
+      if (!(await waitForServer(60_000))) throw new Error(`dev server did not come back after restart #${restarts}`);
+      return true;
+    };
 
     console.log("1. Create org...");
     const { res: orgRes, json: orgJson } = await postJson("/org", { name: "Test Fixture Org", type: "church" });
@@ -119,8 +194,13 @@ async function main() {
     console.log("6. Complete Lab 1...");
     const { res: completeRes } = await postJson(`/lab-session/${lab1Id}/complete`, {});
     if (!completeRes.ok) throw new Error(`FAIL: completing lab 1 failed with ${completeRes.status}`);
-    const progCheckRes = await fetch(`${BASE}/program/${programId}`, { headers: DEV_AUTH_HEADERS });
-    const progState = await progCheckRes.json();
+    // [INFRA-FLAKE-SHIELD v2] this GET used to be a raw fetch(...).json() —
+    // the unshielded parse site that killed CI 34672204710 mid-step-6.
+    const progCheck = await getJson(`${BASE}/program/${programId}`, `GET /program/${programId}`);
+    if (!progCheck.parsed) {
+      throw new Error(`FAIL: GET /program returned non-JSON (${progCheck.res.status}): ${progCheck.text.slice(0, 200)}`);
+    }
+    const progState = progCheck.json;
     if (progState.current_lab !== 1 || progState.status !== "in_progress") {
       throw new Error(`FAIL: expected program.current_lab=1, status=in_progress after Lab 1, got ${JSON.stringify(progState)}`);
     }
@@ -142,8 +222,12 @@ async function main() {
     console.log(`PASS: initiative + overdue step created (due ${pastDue}).`);
 
     console.log("8. Confirm the step shows up as overdue...");
-    const overdueRes = await fetch(`${BASE}/program/${programId}/overdue-steps`, { headers: DEV_AUTH_HEADERS });
-    const overdueJson = await overdueRes.json();
+    // [INFRA-FLAKE-SHIELD v2] second unshielded fetch(...).json() site, now covered.
+    const overdueCheck = await getJson(`${BASE}/program/${programId}/overdue-steps`, `GET /program/${programId}/overdue-steps`);
+    if (!overdueCheck.parsed) {
+      throw new Error(`FAIL: GET /overdue-steps returned non-JSON (${overdueCheck.res.status}): ${overdueCheck.text.slice(0, 200)}`);
+    }
+    const overdueJson = overdueCheck.json;
     if (overdueJson.steps.length !== 1) {
       throw new Error(`FAIL: expected 1 overdue step, got ${overdueJson.steps.length}`);
     }
@@ -179,14 +263,22 @@ async function main() {
     exitCode = 0;
   } catch (err) {
     console.error("TEST FAILED:", err.message ?? err);
-    exitCode = 1;
-  } finally {
-    try {
-      process.kill(-wrangler.pid, "SIGKILL");
-    } catch {
-      wrangler.kill("SIGKILL");
+    // [INFRA-FLAKE-SHIELD v2] exit-3 discipline: transport-class failures
+    // that survive the shield + restart are not app regressions (exit 1).
+    if (isTransportError(err)) {
+      console.error(
+        "[INFRA-FLAKE] final failure is transport-class (upstream wrangler dev defect — workers-sdk #15203/#15452; fix PR #15252 released in wrangler 4.129.1). Exit 3 — not an app regression.",
+      );
+      exitCode = 3;
+    } else {
+      exitCode = 1;
     }
+  } finally {
+    killWranglerProc();
     await sleep(500);
+    if (restarts > 0) {
+      console.error(`[INFRA-FLAKE] NOTE: ${restarts} dev-server restart(s) during this run — upstream wrangler dev transport defect was present (workers-sdk #15203/#15452); app behavior unaffected.`);
+    }
     printInfraFlakeSummary();
   }
 

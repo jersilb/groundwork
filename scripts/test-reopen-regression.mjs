@@ -38,7 +38,7 @@
 import { spawn, execFileSync } from "node:child_process";
 import { mkdirSync, appendFileSync, rmSync } from "node:fs";
 import path from "node:path";
-import { fetchWithShield, printInfraFlakeSummary, isTransportClassFailure } from "./lib/infra-flake-shield.mjs";
+import { fetchWithShield, printInfraFlakeSummary, isTransportClassFailure, isTransportText, parseJsonText } from "./lib/infra-flake-shield.mjs";
 
 const PORT = Number(process.env.GW_PORT ?? 8797);
 const N = Number(process.env.N_REOPENS ?? 25);
@@ -113,8 +113,8 @@ async function postJson(p, body) {
     return { status: null, text: "", json: {}, headers: {}, err: attempt.err, transport: isTransportClassFailure({ err: attempt.err }) };
   }
   const { res, text } = attempt;
-  let json = {};
-  try { json = JSON.parse(text); } catch { /* non-JSON (dev-server page) */ }
+  const parsed = parseJsonText(text);
+  const json = parsed.ok ? parsed.value : {};
   return {
     status: res.status,
     text,
@@ -150,9 +150,22 @@ async function main() {
     }
 
     // Fixture: a completed lab session.
-    const orgId = JSON.parse((await postWithResume("/org", { name: "Reopen Regression Org", type: "church" })).text).id;
-    const programId = JSON.parse((await postWithResume(`/org/${orgId}/program`, {})).text).id;
-    const labId = JSON.parse((await postWithResume(`/program/${programId}/lab-session`, { labNumber: 1, scheduledFor: "2026-09-20T09:00:00Z" })).text).id;
+    // [INFRA-FLAKE-SHIELD v2] text-first: never JSON.parse a raw response
+    // body — a transport-class 500 body would crash here as a mysterious
+    // parse error (and would have been misreported as app-class). If the
+    // body is not JSON, classify: transport -> exit 3 path, else app defect.
+    const fixtureId = (r, what) => {
+      const p = parseJsonText(r.text);
+      if (!p.ok || !p.value?.id) {
+        const e = new Error(`fixture ${what} did not return JSON (status=${r.status}, transport=${r.transport}): ${r.text.slice(0, 200)}`);
+        if (r.transport || isTransportText(r.text)) e.holmesTransport = true;
+        throw e;
+      }
+      return p.value.id;
+    };
+    const orgId = fixtureId(await postWithResume("/org", { name: "Reopen Regression Org", type: "church" }), "org create");
+    const programId = fixtureId(await postWithResume(`/org/${orgId}/program`, {}), "program create");
+    const labId = fixtureId(await postWithResume(`/program/${programId}/lab-session`, { labNumber: 1, scheduledFor: "2026-09-20T09:00:00Z" }), "lab schedule");
     const opened = await postWithResume(`/lab-session/${labId}/open`, {});
     if (opened.status !== 201) throw new Error(`fixture open failed: ${opened.status} ${opened.text.slice(0, 200)}`);
     const completed = await postWithResume(`/lab-session/${labId}/complete`, {});
@@ -196,7 +209,14 @@ async function main() {
     }
   } catch (err) {
     console.error("REOPEN REGRESSION ERROR:", err.message ?? err);
-    exitCode = 1;
+    // [INFRA-FLAKE-SHIELD v2] transport-tagged failures are infra-class
+    const transport = err?.holmesTransport || isTransportText(err?.message ?? "");
+    if (transport) {
+      console.error("REOPEN REGRESSION: INFRA-FLAKE — failure is transport-class (upstream wrangler dev transport defect; workers-sdk #15203/#15452). Exit 3 — never mistaken for green; not an app defect.");
+      exitCode = 3;
+    } else {
+      exitCode = 1;
+    }
   } finally {
     killWrangler(wrangler);
     rmSync(PERSIST_DIR, { recursive: true, force: true });
