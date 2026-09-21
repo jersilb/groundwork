@@ -16,6 +16,14 @@ compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
 account_id = "fd5b09ffec9792936392a2fdeddf8590"
 
+# Workers Logs: persist console + invocation logs to Cloudflare's observability
+# platform so this Worker's failures are queryable instead of invisible. This
+# Worker collected no logs at all, which is why a month of failed scheduled runs
+# on a sibling Worker went unnoticed. Observability is inheritable, so this
+# applies to named environments too (unlike the bindings above).
+[observability]
+enabled = true
+
 [[durable_objects.bindings]]
 name = "SESSION_DO"
 class_name = "SessionDO"
