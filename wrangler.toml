@@ -45,6 +45,12 @@ max_batch_timeout = 5
 # Ceiling on the retry loop for transient Whisper failures — an
 # unrepairable chunk must reach transcription_error and stop, not spin.
 max_retries = 5
+# A chunk that exhausts those retries is routed here instead of being
+# discarded, so it is retained for inspection rather than vanishing with no
+# artifact. Wrangler configures the reference but does not create the queue:
+# run scripts/setup-transcription-dlq.sh once before the deploy that carries
+# this line.
+dead_letter_queue = "groundwork-transcription-dlq"
 
 # In-session Guide Engine master switch (see Env.GUIDE_ENABLED in
 # src/index.ts). Local dev/tests override this to "false" in .dev.vars so
