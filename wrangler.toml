@@ -51,6 +51,15 @@ max_retries = 5
 # no suite depends on a live LLM.
 [vars]
 GUIDE_ENABLED = "true"
+# DEV_AUTH_BYPASS is deliberately NOT set here: [vars] ship to
+# production, and setting it there would re-open the client-header auth
+# bypass by making the Worker trust X-Groundwork-Dev-User/Sub again.
+# Provide it only to local runs (`wrangler dev --var DEV_AUTH_BYPASS:true`
+# or a local .dev.vars) - scripts/test-* pass it the same way.
+#
+# Production auth instead needs the Cloudflare Access secrets
+# CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD, and the Worker must sit
+# behind an Access application that injects CF-Access-Jwt-Assertion.
 # SESSION_SPINE is intentionally NOT set here. Enabling it switches new
 # sessions onto the six-hour reference plan + instructor console. Keep it
 # off until demo↔spine segment keys are verified aligned (see P0: hyphen

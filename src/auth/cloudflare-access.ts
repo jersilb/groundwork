@@ -111,9 +111,11 @@ async function verifyAccessJwt(token: string, teamDomain: string, audience?: str
  * Production: validates the CF-Access-Jwt-Assertion header against the
  * team's Cloudflare Access public keys (env.CF_ACCESS_TEAM_DOMAIN).
  *
- * Local dev (no CF_ACCESS_TEAM_DOMAIN): accepts X-Groundwork-Dev-User and
- * X-Groundwork-Dev-Sub headers so `wrangler dev` and integration tests can
- * run without Access. This bypass is disabled in production.
+ * Local dev: when DEV_AUTH_BYPASS is "true" (set only for `wrangler dev`),
+ * accepts X-Groundwork-Dev-User and X-Groundwork-Dev-Sub headers so local
+ * runs and integration tests need no Access. Production never sets
+ * DEV_AUTH_BYPASS, so when CF_ACCESS_TEAM_DOMAIN is also missing the request
+ * fails closed instead of trusting a client-supplied identity.
  */
 export async function authenticateRequest(request: Request, env: Env): Promise<AuthResult> {
   const teamDomain = env.CF_ACCESS_TEAM_DOMAIN;
@@ -131,10 +133,10 @@ export async function authenticateRequest(request: Request, env: Env): Promise<A
     return { kind: "error", response: new Response("access token required", { status: 401 }) };
   }
 
-  // Dev bypass — only when Cloudflare Access is not configured.
+  // Dev bypass — only when explicitly enabled (never in production).
   const devUser = request.headers.get("X-Groundwork-Dev-User");
   const devSub = request.headers.get("X-Groundwork-Dev-Sub");
-  if (devUser && devSub) {
+  if (env.DEV_AUTH_BYPASS === "true" && devUser && devSub) {
     return { kind: "ok", auth: { email: devUser, sub: devSub } };
   }
 
@@ -201,19 +203,17 @@ export async function upsertOrgCreator(
 }
 
 /**
- * Extract an already-verified auth context from request headers. Route
- * handlers call this; index.ts is responsible for the actual verification
- * on mutating requests. This helper also accepts the dev-bypass headers
- * directly so GETs and WebSocket upgrades can carry identity without
- * requiring a full re-verification pass.
+ * Read the auth context index.ts attached after it verified the request.
+ *
+ * Only the X-Groundwork-Auth-* headers are read. index.ts strips any
+ * client-supplied copy and sets these from a verified credential, so a
+ * handler here trusts nobody but the Worker itself and returns null when the
+ * request carried no verified identity.
  */
 export function getAuthFromRequest(request: Request): AuthContext | null {
-  const email = request.headers.get("X-Groundwork-Auth-Email")
-    ?? request.headers.get("X-Groundwork-Dev-User");
-  const sub = request.headers.get("X-Groundwork-Auth-Sub")
-    ?? request.headers.get("X-Groundwork-Dev-Sub");
+  const email = request.headers.get("X-Groundwork-Auth-Email");
+  const sub = request.headers.get("X-Groundwork-Auth-Sub");
   if (!email || !sub) return null;
-  const name = request.headers.get("X-Groundwork-Auth-Name")
-    ?? undefined;
+  const name = request.headers.get("X-Groundwork-Auth-Name") ?? undefined;
   return { email, sub, name };
 }

@@ -63,7 +63,7 @@ function spawnWrangler() {
   appendFileSync(LOG_PATH, `\n=== wrangler spawn #${restarts + 1} at ${new Date().toISOString()} ===\n`);
   const wr = spawn(
     "npx",
-    ["wrangler", "dev", "--port", String(PORT), "--local", "--persist-to", PERSIST_DIR],
+    ["wrangler", "dev", "--var", "DEV_AUTH_BYPASS:true", "--port", String(PORT), "--local", "--persist-to", PERSIST_DIR],
     { stdio: ["ignore", "pipe", "pipe"], detached: true },
   );
   const tee = (d) => { try { appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${String(d)}`); } catch { /* ignore */ } };

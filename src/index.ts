@@ -30,6 +30,12 @@ export interface Env {
    * carry this audience — without it, any token signed by the team's certs
    * from ANY Access application in the team is accepted. */
   CF_ACCESS_AUD?: string;
+  /** Enables the header-based dev auth bypass. `wrangler dev` sets this to
+   * "true" (via --var or a local .dev.vars) so local runs and integration
+   * tests need no Cloudflare Access. Production must NOT set it: with it
+   * unset, a missing CF_ACCESS_TEAM_DOMAIN fails closed instead of trusting
+   * client-supplied identity headers. */
+  DEV_AUTH_BYPASS?: string;
   /** Master switch for the in-session Guide Engine (PACER/EVALUATOR/
    * PROBER/SYNTHESIZER). "false" disables it even when ANTHROPIC_API_KEY
    * exists — local tests set this in .dev.vars so no suite depends on a
@@ -46,6 +52,17 @@ export interface Env {
 }
 
 const SESSION_CONNECT_PATH = /^\/session\/([A-Za-z0-9_-]+)\/connect$/;
+
+/** Identity headers this Worker sets after it verifies a request. Any inbound
+ * copy is removed before routing, so a route reads an identity only when
+ * index.ts put it there. */
+const IDENTITY_HEADERS = [
+  "X-Groundwork-Auth-Email",
+  "X-Groundwork-Auth-Sub",
+  "X-Groundwork-Auth-Name",
+  "X-Groundwork-Dev-User",
+  "X-Groundwork-Dev-Sub",
+];
 
 /**
  * Worker entry point. Routes WebSocket upgrades to the SessionDO instance
@@ -73,25 +90,45 @@ export default {
       return Response.json(SPINE_REFERENCE_PLAN, { headers: { "cache-control": "public, max-age=3600" } });
     }
 
-    // Authenticate all non-GET, non-OPTIONS API requests before routing.
-    // GETs for session state / plan display and static assets remain open.
-    // The WebSocket upgrade is handled below; the shared screen must pass
-    // the screen token minted by POST /lab-session/:id/open as a query
-    // parameter to perform leader actions.
+    // Resolve identity from a credential this Worker verifies.
     //
-    // /webhooks/* is exempt: Stripe's servers cannot present a CF Access
-    // JWT, and webhook requests authenticate themselves via their HMAC
-    // signature (verified in handleCommerceRoute). This exemption is the
-    // fix for the webhook being 401-dead in production.
-    if (
+    // The X-Groundwork-Auth-* headers are trusted only when this Worker sets
+    // them, so any inbound copy is removed before routing. Previously a GET
+    // skipped this block and the route read the caller's own
+    // X-Groundwork-Auth-Email header, letting an anonymous caller choose an
+    // identity.
+    //
+    // A presented credential is verified on every method (not just
+    // mutations), so session-scoped GETs (the one-page plan, consent status)
+    // get the same verified identity as writes.
+    //
+    // /webhooks/* stays exempt from the auth requirement: Stripe's servers
+    // cannot present a CF Access JWT, and webhook requests authenticate
+    // themselves via their HMAC signature (verified in handleCommerceRoute).
+    const headers = new Headers(request.headers);
+    const hadIdentityHeader = IDENTITY_HEADERS.some((name) => request.headers.has(name));
+    for (const name of IDENTITY_HEADERS) headers.delete(name);
+
+    const hasCredential =
+      request.headers.has("CF-Access-Jwt-Assertion") ||
+      (env.DEV_AUTH_BYPASS === "true" && request.headers.has("X-Groundwork-Dev-User"));
+
+    const requiresAuth =
       request.method !== "GET" &&
       request.method !== "OPTIONS" &&
       request.method !== "HEAD" &&
-      !url.pathname.startsWith("/webhooks/")
-    ) {
+      !url.pathname.startsWith("/webhooks/");
+
+    if (hasCredential || requiresAuth) {
       const authResult = await authenticateRequest(request, env);
       if (authResult.kind === "error") return authResult.response;
-      request = new Request(request, { headers: { ...Object.fromEntries(request.headers), "X-Groundwork-Auth-Email": authResult.auth.email, "X-Groundwork-Auth-Sub": authResult.auth.sub, "X-Groundwork-Auth-Name": authResult.auth.name ?? "" } });
+      headers.set("X-Groundwork-Auth-Email", authResult.auth.email);
+      headers.set("X-Groundwork-Auth-Sub", authResult.auth.sub);
+      headers.set("X-Groundwork-Auth-Name", authResult.auth.name ?? "");
+    }
+
+    if (hasCredential || requiresAuth || hadIdentityHeader) {
+      request = new Request(request, { headers });
     }
 
     const audioResponse = await handleAudioRoute(request, env, url);

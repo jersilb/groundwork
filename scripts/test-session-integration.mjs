@@ -88,7 +88,7 @@ async function waitForPortFree(port, timeoutMs) {
 function spawnWrangler(logLines) {
   const wr = spawn(
     "npx",
-    ["wrangler", "dev", "--port", String(PORT), "--local", "--persist-to", PERSIST_DIR],
+    ["wrangler", "dev", "--var", "DEV_AUTH_BYPASS:true", "--port", String(PORT), "--local", "--persist-to", PERSIST_DIR],
     { stdio: ["ignore", "pipe", "pipe"], detached: true }, // own process group — kill workerd too (docs/decisions.md 2026-07-27 lesson)
   );
   // Drain pipes continuously — an unread pipe fills its OS buffer and

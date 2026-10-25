@@ -146,8 +146,8 @@ async function callNudges(
   const request = new Request(url, {
     method: "POST",
     headers: {
-      "X-Groundwork-Dev-User": LEADER_EMAIL,
-      "X-Groundwork-Dev-Sub": "dev-sub-0001",
+      "X-Groundwork-Auth-Email": LEADER_EMAIL,
+      "X-Groundwork-Auth-Sub": "dev-sub-0001",
       "content-type": "application/json",
     },
     body: JSON.stringify(init?.body ?? {}),
@@ -198,8 +198,8 @@ async function callAddStep(
   const request = new Request(url, {
     method: "POST",
     headers: {
-      "X-Groundwork-Dev-User": LEADER_EMAIL,
-      "X-Groundwork-Dev-Sub": "dev-sub-0001",
+      "X-Groundwork-Auth-Email": LEADER_EMAIL,
+      "X-Groundwork-Auth-Sub": "dev-sub-0001",
       "content-type": "application/json",
     },
     body: JSON.stringify(body),
@@ -221,8 +221,8 @@ async function callCreateInitiative(
   const request = new Request(url, {
     method: "POST",
     headers: {
-      "X-Groundwork-Dev-User": LEADER_EMAIL,
-      "X-Groundwork-Dev-Sub": "dev-sub-0001",
+      "X-Groundwork-Auth-Email": LEADER_EMAIL,
+      "X-Groundwork-Auth-Sub": "dev-sub-0001",
       "content-type": "application/json",
     },
     body: JSON.stringify(body),

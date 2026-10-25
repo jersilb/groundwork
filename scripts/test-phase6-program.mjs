@@ -115,7 +115,7 @@ async function getJson(url, label, resumed = false) {
 }
 
 function spawnWrangler() {
-  const wr = spawn("npx", ["wrangler", "dev", "--port", String(PORT), "--local"], {
+  const wr = spawn("npx", ["wrangler", "dev", "--var", "DEV_AUTH_BYPASS:true", "--port", String(PORT), "--local"], {
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   });

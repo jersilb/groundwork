@@ -58,7 +58,7 @@ async function main() {
   }
 
   console.log(`Starting wrangler dev on port ${PORT} (--local — D1/R2/Queue emulated, no billed Cloudflare resources)...`);
-  const wrangler = spawn("npx", ["wrangler", "dev", "--port", String(PORT), "--local"], {
+  const wrangler = spawn("npx", ["wrangler", "dev", "--var", "DEV_AUTH_BYPASS:true", "--port", String(PORT), "--local"], {
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
     env: { ...process.env },

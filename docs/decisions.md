@@ -265,3 +265,13 @@ BreakoutSpec (Release-2) and observable `vote_completed` for the leader (M4).
    session budget; console time_check bridging no longer hard-codes 0.
 6. **Dual-queue pacing**: if a pending spineTick `time_check` already exists, LLM
    pacer enqueue is skipped for that window (same 30s alarm).
+
+---
+
+## 2026-10-25 — Client-supplied identity headers are no longer trusted
+
+**Made by**: Polylane fix run (Tier 1 — corrects a reachable auth bypass; no new resource)
+**Context**: `getAuthFromRequest` read `X-Groundwork-Auth-Email` straight from the request, and `index.ts` skipped the auth block for GET, so an anonymous GET with a spoofed header was honored as that member. The dev bypass (`X-Groundwork-Dev-User/Sub`) also ran in production because `CF_ACCESS_TEAM_DOMAIN` is unset there.
+**Decision**: `index.ts` now strips every inbound `X-Groundwork-Auth-*` / `X-Groundwork-Dev-*` header and sets them only from a credential it verified. A presented credential is verified on every method, not only mutations. The dev bypass requires `DEV_AUTH_BYPASS="true"`, which is set only for local `wrangler dev`.
+**Rationale**: Identity must come from a verified credential, never from a header the caller can choose. Keying the dev bypass on the absence of config inverted the safe default; an explicit opt-in makes production fail closed.
+**Outcome**: Spoofed identity on GET and the production dev bypass both close. Production auth still needs the Cloudflare Access secrets and an Access application (see `wrangler.toml`).
